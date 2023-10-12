@@ -9,6 +9,11 @@
     "moduleResolution": "node",
     "esModuleInterop": true
   },
-  "include": ["src/**/*.ts", "index.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "src/**/*.ts",
+    "src/index.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
