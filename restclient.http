@@ -1,0 +1,5 @@
+POST https://oauth.reddit.com/api/editusertext
+?thing_id=t3_16et2sw
+&text=This+is+a+test+posst+from+Postman
+Authorization: bearer 1234567890
+User-Agent: PostmanRuntime/7.28.0
