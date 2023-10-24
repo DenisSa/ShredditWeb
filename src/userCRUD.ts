@@ -60,7 +60,7 @@ export class userCrud {
             headers: headers
         })
 
-        console.log(`Deleted ${JSON.stringify(post.selftext)}, response: ${res}`)
+        console.log(`Deleted ${JSON.stringify(post)}, response: ${res.status} ${res.statusText} ${JSON.stringify(res.data)}`)
     }
 
     async getAllCommentsDetails() {

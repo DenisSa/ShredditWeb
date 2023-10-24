@@ -43,7 +43,7 @@ async function main() {
         }
         await crud.deletePost(post, DRY_RUN)
         await sleep(1000)
-        return;
+        // return;
     }
 
     console.log("done")
