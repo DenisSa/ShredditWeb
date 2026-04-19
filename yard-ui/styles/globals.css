@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --page-bg: #f3ede0;
+  --page-bg-strong: #e5d9bf;
+  --page-panel: rgba(255, 249, 238, 0.88);
+  --page-panel-strong: rgba(255, 252, 245, 0.96);
+  --page-border: rgba(64, 44, 30, 0.14);
+  --page-ink: #20150f;
+  --page-muted: #6f5c4b;
+  --page-accent: #b63b18;
+  --page-accent-strong: #8f2d12;
+  --page-success: #2c6a44;
+  --page-warning: #a56a16;
+  --page-danger: #9a2f20;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(211, 90, 44, 0.22), transparent 34%),
+    radial-gradient(circle at top right, rgba(196, 156, 58, 0.18), transparent 28%),
+    linear-gradient(180deg, var(--page-bg), #efe7d6 48%, #f8f3e7 100%);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--page-ink);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.55), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0));
+  font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(182, 59, 24, 0.18);
+}
