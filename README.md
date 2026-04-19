@@ -51,6 +51,16 @@ For local Reddit auth, the app registration and env must match exactly:
 - Redirect URI in Reddit: `http://localhost:3000/api/auth/reddit/callback`
 - `REDDIT_REDIRECT_URI` in `yard-ui/.env.local`: `http://localhost:3000/api/auth/reddit/callback`
 
+## Docker
+
+If you prefer to run the app in Docker, keep `yard-ui/.env.local` populated and start the service from the repo root:
+
+```bash
+docker compose up --build
+```
+
+This uses `docker-compose.yml` to build the `yard-ui` production image and serve it on `http://localhost:3000`.
+
 ## Production Build
 
 ```bash

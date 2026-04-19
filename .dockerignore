@@ -1,0 +1,15 @@
+.git
+.gitignore
+.codex
+.pnpm-store
+node_modules
+yard-lib/node_modules
+yard-ui/node_modules
+yard-ui/.next
+yard-ui/out
+yard-ui/.env.local
+yard-ui/.vscode
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
