@@ -1,0 +1,63 @@
+name: Yard UI CI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/yard-ui-ci.yml"
+      - ".node-version"
+      - ".nvmrc"
+      - ".npmrc"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "yard-ui/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/yard-ui-ci.yml"
+      - ".node-version"
+      - ".nvmrc"
+      - ".npmrc"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "yard-ui/**"
+  workflow_dispatch:
+
+concurrency:
+  group: yard-ui-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  yard-ui:
+    name: Build, lint, and test yard-ui
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint yard-ui
+        run: pnpm --filter shredditweb-ui lint
+
+      - name: Build yard-ui
+        run: pnpm --filter shredditweb-ui build
+
+      - name: Run yard-ui tests
+        run: pnpm --filter shredditweb-ui test:run
