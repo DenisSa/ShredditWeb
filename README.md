@@ -1,6 +1,6 @@
 # ShredditWeb
 
-ShredditWeb is a server-backed Reddit cleanup tool. The active app lives in `yard-ui` and uses a single Reddit web app, a server-side OAuth callback, an in-memory browser-session cookie, a preview step, a dry-run mode, and a live progress bar for destructive runs.
+ShredditWeb is a server-backed Reddit cleanup tool. The active app lives in `yard-ui` and uses a single Reddit web app, a server-side OAuth callback, a SQLite-backed persistent session, a preview step, a dry-run mode, and a live progress bar for destructive runs.
 
 ## What it does
 
@@ -9,14 +9,16 @@ ShredditWeb is a server-backed Reddit cleanup tool. The active app lives in `yar
 - Previews which items match the active rules.
 - Optionally dry-runs the deletion pass.
 - Overwrites comment or self-post text before deleting, then generates a downloadable local report.
+- Stores deleted item content and metadata in SQLite after successful live deletions.
+- Lets each Reddit account persist its own deleted-history storage preference.
 
 ## Current rules
 
 - Deletes content older than `7` days.
 - Deletes content with score below `100`.
 - Includes both comments and posts.
-- Uses a single browser session with server-side in-memory state.
-- Browser refresh reconnects to an active run, but server restarts clear active sessions and jobs.
+- Stores persistent auth sessions in SQLite so reconnecting does not require a fresh Reddit login.
+- Browser refresh reconnects to an active run, but server restarts still clear active in-memory jobs.
 
 ## Setup
 
@@ -32,9 +34,12 @@ SESSION_SECRET=replace_with_a_long_random_secret
 # Optional overrides:
 # NEXT_PUBLIC_MIN_AGE_DAYS=7
 # NEXT_PUBLIC_MAX_SCORE=100
+# SQLITE_PATH=./data/shreddit.sqlite
+# SESSION_MAX_AGE_DAYS=30
 ```
 
 The UI never sees the Reddit client secret, access token, or refresh token. Those stay server-side.
+By default the server stores persistent sessions and deleted-item history in SQLite at `./data/shreddit.sqlite`, and persisted Reddit grant blobs are encrypted with `SESSION_SECRET`. Deleted-history storage is enabled by default, but each Reddit account can turn it off from the UI and that preference is saved in SQLite.
 
 ## Local development
 
@@ -94,7 +99,8 @@ Make sure the deployed callback route exactly matches `REDDIT_REDIRECT_URI`, for
 
 - `yard-ui`: active Next.js application
 - `yard-ui/lib/server/shreddit-core.ts`: server-side Reddit OAuth, preview, token refresh, and shred logic
-- `yard-ui/lib/server/shreddit-store.ts`: in-memory session and job store
+- `yard-ui/lib/server/shreddit-db.ts`: SQLite persistence for sessions and deleted-item history
+- `yard-ui/lib/server/shreddit-store.ts`: persistent session store plus in-memory preview/job state
 - `yard-ui/lib/shreddit.ts`: browser client helpers for the server APIs
 - `yard-ui/components/shreddit-app.tsx`: single-page UI flow
 - `yard-lib`: legacy Node script reference, no longer the intended deployment target

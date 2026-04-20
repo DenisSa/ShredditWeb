@@ -3,6 +3,14 @@ import "server-only";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import {
+  clearPersistedAccountGrant,
+  ensureAccountSettings,
+  insertDeletedItem,
+  PersistedRedditGrant,
+  upsertPersistedAccountGrant,
+} from "@/lib/server/shreddit-db";
+import {
+  CleanupSettings,
   PreviewItem,
   PreviewProgress,
   PreviewResult,
@@ -13,7 +21,7 @@ import {
   SessionSummary,
   ShredRules,
 } from "@/lib/shreddit-types";
-import { ServerSessionRecord } from "@/lib/server/shreddit-store";
+import { ServerSessionRecord, updateSession } from "@/lib/server/shreddit-store";
 
 const COMMENT_EDIT_DELAY_MS = 1100;
 const DELETE_DELAY_MS = 200;
@@ -98,6 +106,14 @@ type RedditTokenResponse = {
 
 type RequestErrorBody = unknown;
 
+export type RedditRuntimeContext = {
+  id: string;
+  sessionId: string | null;
+  usernameHint: string | null;
+  reddit: PersistedRedditGrant | null;
+  persistGrant: (grant: PersistedRedditGrant | null) => void;
+};
+
 export class RedditAuthError extends Error {
   constructor(message: string) {
     super(message);
@@ -121,6 +137,13 @@ export class RedditRequestError extends Error {
     this.name = "RedditRequestError";
     this.status = status;
     this.details = details;
+  }
+}
+
+export class RunConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunConflictError";
   }
 }
 
@@ -180,6 +203,24 @@ function requireServerRuntimeConfig() {
   return config;
 }
 
+export function getDefaultCleanupSettings() {
+  const config = getServerRuntimeConfig();
+
+  return {
+    minAgeDays: config.minAgeDays,
+    maxScore: config.maxScore,
+    storeDeletionHistory: true,
+  } satisfies CleanupSettings;
+}
+
+export function createRulesFromCleanupSettings(settings: Pick<CleanupSettings, "minAgeDays" | "maxScore">, now = Date.now()) {
+  return {
+    minAgeDays: settings.minAgeDays,
+    maxScore: settings.maxScore,
+    cutoffUnix: Math.floor(now / 1000) - settings.minAgeDays * 24 * 60 * 60,
+  } satisfies ShredRules;
+}
+
 export function getPublicSessionDefaults() {
   const config = getServerRuntimeConfig();
 
@@ -208,16 +249,6 @@ function normalizeScopes(scopeValue: string | null | undefined) {
     .split(/[,\s]+/)
     .map((scope) => scope.trim())
     .filter(Boolean);
-}
-
-function createRules(now = Date.now()) {
-  const config = getServerRuntimeConfig();
-
-  return {
-    minAgeDays: config.minAgeDays,
-    maxScore: config.maxScore,
-    cutoffUnix: Math.floor(now / 1000) - config.minAgeDays * 24 * 60 * 60,
-  } satisfies ShredRules;
 }
 
 function buildUserAgent(username = DEFAULT_REDDIT_USERNAME) {
@@ -341,43 +372,95 @@ export async function exchangeAuthorizationCode(code: string) {
     expiresAt: now + tokenData.expires_in * 1000,
     scope: normalizeScopes(tokenData.scope),
     username: me.name,
+  } satisfies PersistedRedditGrant;
+}
+
+export function createSessionRedditContext(session: ServerSessionRecord): RedditRuntimeContext {
+  return {
+    id: `session:${session.id}`,
+    sessionId: session.id,
+    usernameHint: session.reddit?.username ?? null,
+    reddit: session.reddit,
+    persistGrant(grant) {
+      const previousUsername = session.reddit?.username ?? this.usernameHint;
+
+      updateSession(session, { reddit: grant as ServerSessionRecord["reddit"] });
+
+      if (grant) {
+        upsertPersistedAccountGrant(grant);
+      } else if (previousUsername) {
+        clearPersistedAccountGrant(previousUsername, true);
+      }
+
+      this.reddit = grant;
+      this.usernameHint = grant?.username ?? previousUsername ?? this.usernameHint;
+    },
   };
 }
 
-async function refreshRedditGrant(session: ServerSessionRecord, force = false) {
-  if (!session.reddit) {
+export function createAccountRedditContext(auth: {
+  username: string;
+  grant: PersistedRedditGrant | null;
+}): RedditRuntimeContext {
+  return {
+    id: `account:${auth.username}`,
+    sessionId: null,
+    usernameHint: auth.username,
+    reddit: auth.grant,
+    persistGrant(grant) {
+      if (grant) {
+        upsertPersistedAccountGrant(grant);
+      } else {
+        clearPersistedAccountGrant(auth.username, true);
+      }
+
+      this.reddit = grant;
+      this.usernameHint = grant?.username ?? auth.username;
+    },
+  };
+}
+
+export function initializeAuthenticatedAccount(grant: PersistedRedditGrant) {
+  upsertPersistedAccountGrant(grant);
+  ensureAccountSettings(grant.username, getDefaultCleanupSettings());
+}
+
+async function refreshRedditGrant(context: RedditRuntimeContext, force = false) {
+  if (!context.reddit) {
     throw new RedditAuthError("Sign in with Reddit before previewing or shredding content.");
   }
 
-  if (!force && Date.now() < session.reddit.expiresAt - ACCESS_TOKEN_LEEWAY_MS) {
-    return session.reddit;
+  if (!force && Date.now() < context.reddit.expiresAt - ACCESS_TOKEN_LEEWAY_MS) {
+    return context.reddit;
   }
 
   try {
     const tokenData = await requestToken(
       new URLSearchParams({
         grant_type: "refresh_token",
-        refresh_token: session.reddit.refreshToken,
+        refresh_token: context.reddit.refreshToken,
       }),
     );
 
     if (!tokenData.access_token || !tokenData.expires_in) {
-      session.reddit = null;
+      context.persistGrant(null);
       throw new RedditAuthError("Reddit returned an incomplete refresh-token response.");
     }
 
-    session.reddit = {
-      ...session.reddit,
+    const redditGrant = {
+      ...context.reddit,
       accessToken: tokenData.access_token,
       obtainedAt: Date.now(),
       expiresAt: Date.now() + tokenData.expires_in * 1000,
-      scope: tokenData.scope ? normalizeScopes(tokenData.scope) : session.reddit.scope,
-    };
+      scope: tokenData.scope ? normalizeScopes(tokenData.scope) : context.reddit.scope,
+    } satisfies PersistedRedditGrant;
 
-    return session.reddit;
+    context.persistGrant(redditGrant);
+
+    return redditGrant;
   } catch (error) {
     if (error instanceof RedditAuthError) {
-      session.reddit = null;
+      context.persistGrant(null);
     }
 
     throw error;
@@ -411,7 +494,7 @@ async function waitForRateLimit(response: Response) {
 }
 
 async function fetchReddit(
-  session: ServerSessionRecord,
+  context: RedditRuntimeContext,
   input: string,
   init?: RequestInit,
 ): Promise<Response> {
@@ -419,7 +502,7 @@ async function fetchReddit(
   let forcedRefresh = false;
 
   while (attempt < 3) {
-    const reddit = await refreshRedditGrant(session, attempt > 0);
+    const reddit = await refreshRedditGrant(context, attempt > 0);
 
     try {
       const response = await fetch(input, {
@@ -438,7 +521,7 @@ async function fetchReddit(
 
       if (response.status === 401 && !forcedRefresh) {
         forcedRefresh = true;
-        await refreshRedditGrant(session, true);
+        await refreshRedditGrant(context, true);
         attempt += 1;
         continue;
       }
@@ -480,7 +563,7 @@ async function fetchReddit(
 }
 
 async function fetchListingPage<T>(
-  session: ServerSessionRecord,
+  context: RedditRuntimeContext,
   pathname: string,
   after: string | null,
 ): Promise<ListingResponse<T>> {
@@ -492,7 +575,7 @@ async function fetchListingPage<T>(
     url.searchParams.set("after", after);
   }
 
-  const response = await fetchReddit(session, url.toString());
+  const response = await fetchReddit(context, url.toString());
   return response.json() as Promise<ListingResponse<T>>;
 }
 
@@ -576,16 +659,17 @@ function summarizeItem(item: PreviewItem) {
 }
 
 export async function buildPreview(
-  session: ServerSessionRecord,
+  context: RedditRuntimeContext,
+  settings: CleanupSettings,
   onProgress?: (progress: PreviewProgress) => void,
 ) {
-  const reddit = await refreshRedditGrant(session);
+  const reddit = await refreshRedditGrant(context);
 
   if (!reddit.username) {
     throw new RedditAuthError("Reddit did not return a username for the current session.");
   }
 
-  const rules = createRules();
+  const rules = createRulesFromCleanupSettings(settings);
   let commentsAfter: string | null = null;
   let postsAfter: string | null = null;
   const comments: PreviewItem[] = [];
@@ -599,7 +683,7 @@ export async function buildPreview(
 
   do {
     const page: ListingResponse<RedditComment> = await fetchListingPage<RedditComment>(
-      session,
+      context,
       `/user/${encodeURIComponent(reddit.username)}/comments.json`,
       commentsAfter,
     );
@@ -618,7 +702,7 @@ export async function buildPreview(
 
   do {
     const page: ListingResponse<RedditSubmission> = await fetchListingPage<RedditSubmission>(
-      session,
+      context,
       `/user/${encodeURIComponent(reddit.username)}/submitted.json`,
       postsAfter,
     );
@@ -661,13 +745,13 @@ export async function buildPreview(
   } satisfies PreviewResult;
 }
 
-async function editThing(session: ServerSessionRecord, item: PreviewItem) {
+async function editThing(context: RedditRuntimeContext, item: PreviewItem) {
   const payload = new URLSearchParams({
     thing_id: item.name,
     text: createOverwriteText(),
   }).toString();
 
-  await fetchReddit(session, "https://oauth.reddit.com/api/editusertext", {
+  await fetchReddit(context, "https://oauth.reddit.com/api/editusertext", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -676,12 +760,12 @@ async function editThing(session: ServerSessionRecord, item: PreviewItem) {
   });
 }
 
-async function deleteThing(session: ServerSessionRecord, item: PreviewItem) {
+async function deleteThing(context: RedditRuntimeContext, item: PreviewItem) {
   const payload = new URLSearchParams({
     id: item.name,
   }).toString();
 
-  await fetchReddit(session, "https://oauth.reddit.com/api/del", {
+  await fetchReddit(context, "https://oauth.reddit.com/api/del", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -691,14 +775,17 @@ async function deleteThing(session: ServerSessionRecord, item: PreviewItem) {
 }
 
 export async function runShred(
-  session: ServerSessionRecord,
+  context: RedditRuntimeContext,
   preview: PreviewResult,
+  settings: CleanupSettings,
   dryRun: boolean,
+  jobId?: string,
   onProgress?: (progress: RunProgress) => void,
 ) {
-  const reddit = await refreshRedditGrant(session);
+  const reddit = await refreshRedditGrant(context);
   const failures: RunFailure[] = [];
   const rules = preview.rules;
+  const historySessionId = context.sessionId ?? `scheduled:${reddit.username}`;
 
   let processed = 0;
   let deleted = 0;
@@ -709,6 +796,7 @@ export async function runShred(
   onProgress?.({
     phase: "starting",
     processed,
+    edited,
     deleted,
     failed: failures.length,
     total: preview.eligibleItems.length,
@@ -720,12 +808,15 @@ export async function runShred(
 
   for (const item of preview.eligibleItems) {
     const label = summarizeItem(item);
+    const shouldOverwrite = itemNeedsOverwrite(item);
+    let editedBeforeDelete = false;
 
     try {
       if (dryRun) {
         onProgress?.({
           phase: "dry-run",
           processed,
+          edited,
           deleted,
           failed: failures.length,
           total: preview.eligibleItems.length,
@@ -735,10 +826,11 @@ export async function runShred(
 
         await delay(DRY_RUN_DELAY_MS);
       } else {
-        if (itemNeedsOverwrite(item)) {
+        if (shouldOverwrite) {
           onProgress?.({
             phase: "editing",
             processed,
+            edited,
             deleted,
             failed: failures.length,
             total: preview.eligibleItems.length,
@@ -746,14 +838,16 @@ export async function runShred(
             currentStep: "Overwriting original text",
           });
 
-          await editThing(session, item);
+          await editThing(context, item);
           edited += 1;
+          editedBeforeDelete = true;
           await delay(COMMENT_EDIT_DELAY_MS);
         }
 
         onProgress?.({
           phase: "deleting",
           processed,
+          edited,
           deleted,
           failed: failures.length,
           total: preview.eligibleItems.length,
@@ -761,15 +855,26 @@ export async function runShred(
           currentStep: "Deleting item from Reddit",
         });
 
-        await deleteThing(session, item);
+        await deleteThing(context, item);
         deleted += 1;
+        if (settings.storeDeletionHistory) {
+          insertDeletedItem({
+            deletedAt: Date.now(),
+            sessionId: historySessionId,
+            jobId: jobId ?? null,
+            username: reddit.username,
+            item,
+            editedBeforeDelete,
+            rules,
+          });
+        }
         await delay(DELETE_DELAY_MS);
       }
     } catch (error) {
       failures.push({
         id: item.id,
         label,
-        step: dryRun ? "dry-run" : itemNeedsOverwrite(item) ? "edit/delete" : "delete",
+        step: dryRun ? "dry-run" : shouldOverwrite ? "edit/delete" : "delete",
         message: toUserMessage(error),
         permalink: item.permalink,
       });
@@ -817,6 +922,7 @@ export async function runShred(
   onProgress?.({
     phase: "done",
     processed: report.totals.processed,
+    edited: report.totals.edited,
     deleted: report.totals.deleted,
     failed: report.totals.failed,
     total: preview.eligibleItems.length,
@@ -839,6 +945,7 @@ export function toUserMessage(error: unknown) {
   if (
     error instanceof RedditAuthError ||
     error instanceof RedditConnectivityError ||
+    error instanceof RunConflictError ||
     error instanceof Error
   ) {
     return error.message;

@@ -1,4 +1,6 @@
 import { NextRequest } from "next/server";
+import { ensureAccountSettings } from "@/lib/server/shreddit-db";
+import { getDefaultCleanupSettings } from "@/lib/server/shreddit-core";
 import { startSessionJob } from "@/lib/server/shreddit-jobs";
 import { jsonError, jsonNoStore } from "@/lib/server/shreddit-responses";
 import { getActiveJobForSession, getSessionFromRequest } from "@/lib/server/shreddit-store";
@@ -31,7 +33,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as { dryRun?: boolean };
     const dryRun = body?.dryRun !== false;
-    const job = startSessionJob(session, dryRun);
+    const settings = ensureAccountSettings(session.reddit.username, getDefaultCleanupSettings());
+    const job = startSessionJob(session, settings, dryRun);
 
     return jsonNoStore({
       jobId: job.jobId,

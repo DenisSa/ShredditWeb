@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   exchangeAuthorizationCode,
+  initializeAuthenticatedAccount,
   toUserMessage,
 } from "@/lib/server/shreddit-core";
 import { redirectHomeWithAuthError } from "@/lib/server/shreddit-responses";
 import {
   getSessionFromRequest,
   setSessionCookie,
+  updateSession,
 } from "@/lib/server/shreddit-store";
 
 export const runtime = "nodejs";
@@ -24,7 +26,7 @@ export async function GET(request: NextRequest) {
   const error = request.nextUrl.searchParams.get("error");
 
   if (error) {
-    session.oauthState = null;
+    updateSession(session, { oauthState: null });
     return redirectHomeWithAuthError(
       request,
       error === "access_denied"
@@ -37,7 +39,7 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
 
   if (!state || !code) {
-    session.oauthState = null;
+    updateSession(session, { oauthState: null });
     return redirectHomeWithAuthError(
       request,
       "Reddit did not return a valid authorization code response.",
@@ -45,7 +47,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (!session.oauthState || session.oauthState !== state) {
-    session.oauthState = null;
+    updateSession(session, { oauthState: null });
     return redirectHomeWithAuthError(
       request,
       "The Reddit auth response did not match the stored state value. Try signing in again.",
@@ -54,17 +56,22 @@ export async function GET(request: NextRequest) {
 
   try {
     const redditGrant = await exchangeAuthorizationCode(code);
-    session.oauthState = null;
-    session.reddit = redditGrant;
-    session.preview = null;
+    initializeAuthenticatedAccount(redditGrant);
+    updateSession(session, {
+      oauthState: null,
+      reddit: redditGrant,
+      preview: null,
+    });
 
     const response = NextResponse.redirect(new URL("/", request.url));
     setSessionCookie(response, session.id);
     return response;
   } catch (callbackError) {
-    session.oauthState = null;
-    session.reddit = null;
-    session.preview = null;
+    updateSession(session, {
+      oauthState: null,
+      reddit: null,
+      preview: null,
+    });
     return redirectHomeWithAuthError(request, toUserMessage(callbackError));
   }
 }

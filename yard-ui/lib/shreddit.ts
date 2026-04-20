@@ -1,20 +1,27 @@
 import {
+  AccountSchedule,
+  CleanupSettings,
   PreviewItem,
   PreviewResult,
   REQUIRED_SCOPES,
   RunReport,
+  ScheduledRunSummary,
   SessionSummary,
   JobSnapshot,
 } from "@/lib/shreddit-types";
 
 export type {
+  AccountSchedule,
   JobSnapshot,
+  CleanupSettings,
   PreviewProgress,
   PreviewResult,
   RunProgress,
   RunReport,
+  ScheduledRunSummary,
   SessionSummary,
 } from "@/lib/shreddit-types";
+export { DEFAULT_STORE_DELETION_HISTORY } from "@/lib/shreddit-types";
 
 function getErrorMessage(payload: unknown, fallback: string) {
   if (
@@ -67,9 +74,42 @@ export async function fetchSessionSummary() {
   return fetchJson<SessionSummary>("/api/session");
 }
 
-export async function requestPreview() {
+export async function saveAccountSettings(input: {
+  storeDeletionHistory: boolean;
+  minAgeDays: number;
+  maxScore: number;
+  schedule: Pick<AccountSchedule, "enabled" | "cadence" | "minuteUtc" | "hourUtc" | "weekdayUtc">;
+}) {
+  return fetchJson<{
+    settings: CleanupSettings;
+    schedule: AccountSchedule;
+    requiresReconnect: boolean;
+  }>("/api/settings/account", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateDeletionHistoryPreference(storeDeletionHistory: boolean) {
+  return fetchJson<{ storeDeletionHistory: boolean }>("/api/settings/history", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ storeDeletionHistory }),
+  });
+}
+
+export async function requestPreview(rules?: Pick<CleanupSettings, "minAgeDays" | "maxScore">) {
   return fetchJson<PreviewResult>("/api/preview", {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(rules ? { rules } : {}),
   });
 }
 
@@ -97,6 +137,22 @@ export async function logoutRedditSession() {
     const payload = await readResponsePayload(response);
     throw new Error(getErrorMessage(payload, "Unable to clear the current Reddit session."));
   }
+}
+
+export async function disconnectRedditAccount() {
+  const response = await fetch("/api/auth/disconnect", {
+    method: "POST",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const payload = await readResponsePayload(response);
+    throw new Error(getErrorMessage(payload, "Unable to disconnect the current Reddit account."));
+  }
+}
+
+export async function fetchScheduledHistory(limit = 10) {
+  return fetchJson<{ items: ScheduledRunSummary[] }>(`/api/history/scheduled?limit=${encodeURIComponent(String(limit))}`);
 }
 
 type RunEventHandlers = {
@@ -174,6 +230,14 @@ export function formatTimestamp(timestamp: number) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(timestamp);
+}
+
+export function getBrowserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+export function getBrowserTimezoneOffsetMinutes() {
+  return new Date().getTimezoneOffset();
 }
 
 export function formatExpiry(expiresAt: number | null) {

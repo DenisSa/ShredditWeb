@@ -6,9 +6,18 @@ import {
   RunProgress,
   RunReport,
 } from "@/lib/shreddit-types";
+import {
+  deleteExpiredPersistedSessions,
+  deletePersistedSession,
+  loadPersistedSession,
+  PersistedSessionRecord,
+  upsertPersistedSession,
+} from "@/lib/server/shreddit-db";
+import { releaseAccountRun } from "@/lib/server/shreddit-run-coordinator";
 
 const SESSION_COOKIE_NAME = "shreddit.sid";
-const SESSION_IDLE_TTL_MS = 12 * 60 * 60 * 1000;
+const SESSION_MAX_AGE_DAYS = 30;
+const SESSION_MAX_AGE_MS = SESSION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 const FINISHED_JOB_TTL_MS = 30 * 60 * 1000;
 
 export type ServerRedditGrant = {
@@ -35,6 +44,7 @@ type JobListener = (event: "progress" | "complete" | "error", snapshot: JobSnaps
 export type ServerJobRecord = {
   jobId: string;
   sessionId: string;
+  username: string;
   dryRun: boolean;
   status: JobSnapshot["status"];
   progress: RunProgress | null;
@@ -44,9 +54,9 @@ export type ServerJobRecord = {
 };
 
 type ShredditStore = {
-  sessions: Map<string, ServerSessionRecord>;
+  previews: Map<string, PreviewResult>;
   jobs: Map<string, ServerJobRecord>;
-  cleanupStarted: boolean;
+  maintenanceStarted: boolean;
 };
 
 type GlobalWithStore = typeof globalThis & {
@@ -58,43 +68,52 @@ function getStore() {
 
   if (!globalWithStore.__shredditStore) {
     globalWithStore.__shredditStore = {
-      sessions: new Map<string, ServerSessionRecord>(),
+      previews: new Map<string, PreviewResult>(),
       jobs: new Map<string, ServerJobRecord>(),
-      cleanupStarted: false,
+      maintenanceStarted: false,
     };
   }
 
-  const store = globalWithStore.__shredditStore;
+  return globalWithStore.__shredditStore;
+}
 
-  if (!store.cleanupStarted) {
-    store.cleanupStarted = true;
+export function startStoreMaintenance() {
+  const store = getStore();
 
-    setInterval(() => {
-      const now = Date.now();
-
-      for (const [sessionId, session] of store.sessions.entries()) {
-        if (session.activeJobId && !store.jobs.has(session.activeJobId)) {
-          session.activeJobId = null;
-        }
-
-        if (!session.activeJobId && now - session.lastSeenAt > SESSION_IDLE_TTL_MS) {
-          store.sessions.delete(sessionId);
-        }
-      }
-
-      for (const [jobId, job] of store.jobs.entries()) {
-        if (job.status !== "running" && now - job.updatedAt > FINISHED_JOB_TTL_MS) {
-          store.jobs.delete(jobId);
-        }
-      }
-    }, 60_000).unref?.();
+  if (store.maintenanceStarted) {
+    return;
   }
 
-  return store;
+  store.maintenanceStarted = true;
+
+  setInterval(() => {
+    const now = Date.now();
+    const expiredSessionIds = deleteExpiredPersistedSessions(now - getSessionMaxAgeMs());
+
+    for (const sessionId of expiredSessionIds) {
+      store.previews.delete(sessionId);
+    }
+
+    for (const [jobId, job] of store.jobs.entries()) {
+      if (job.status !== "running" && now - job.updatedAt > FINISHED_JOB_TTL_MS) {
+        store.jobs.delete(jobId);
+      }
+    }
+  }, 60_000).unref?.();
 }
 
 function getSessionSecret() {
   return process.env.SESSION_SECRET?.trim() ?? null;
+}
+
+function getSessionMaxAgeMs() {
+  const configuredDays = Number(process.env.SESSION_MAX_AGE_DAYS);
+
+  if (Number.isFinite(configuredDays) && configuredDays > 0) {
+    return configuredDays * 24 * 60 * 60 * 1000;
+  }
+
+  return SESSION_MAX_AGE_MS;
 }
 
 function signSessionId(sessionId: string, secret: string) {
@@ -128,6 +147,62 @@ function decodeCookieValue(value: string, secret: string) {
   return sessionId;
 }
 
+function toPersistedSession(session: ServerSessionRecord): PersistedSessionRecord {
+  return {
+    id: session.id,
+    createdAt: session.createdAt,
+    lastSeenAt: session.lastSeenAt,
+    oauthState: session.oauthState,
+    reddit: session.reddit,
+    activeJobId: session.activeJobId,
+  };
+}
+
+function hydrateSession(session: PersistedSessionRecord): ServerSessionRecord {
+  return {
+    ...session,
+    preview: getStore().previews.get(session.id) ?? null,
+  };
+}
+
+function saveSession(session: ServerSessionRecord) {
+  upsertPersistedSession(toPersistedSession(session));
+}
+
+export function updateSession(
+  session: ServerSessionRecord,
+  updates: Partial<Pick<ServerSessionRecord, "lastSeenAt" | "oauthState" | "reddit" | "preview" | "activeJobId">>,
+) {
+  if ("lastSeenAt" in updates && updates.lastSeenAt !== undefined) {
+    session.lastSeenAt = updates.lastSeenAt;
+  }
+
+  if ("oauthState" in updates) {
+    session.oauthState = updates.oauthState ?? null;
+  }
+
+  if ("reddit" in updates) {
+    session.reddit = updates.reddit ?? null;
+  }
+
+  if ("activeJobId" in updates) {
+    session.activeJobId = updates.activeJobId ?? null;
+  }
+
+  if ("preview" in updates) {
+    session.preview = updates.preview ?? null;
+
+    if (updates.preview) {
+      getStore().previews.set(session.id, updates.preview);
+    } else {
+      getStore().previews.delete(session.id);
+    }
+  }
+
+  saveSession(session);
+  return session;
+}
+
 export function setSessionCookie(response: NextResponse, sessionId: string) {
   const secret = getSessionSecret();
 
@@ -142,6 +217,7 @@ export function setSessionCookie(response: NextResponse, sessionId: string) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
+    maxAge: Math.floor(getSessionMaxAgeMs() / 1000),
   });
 }
 
@@ -158,6 +234,8 @@ export function clearSessionCookie(response: NextResponse) {
 }
 
 export function getSessionFromRequest(request: NextRequest) {
+  startStoreMaintenance();
+
   const secret = getSessionSecret();
 
   if (!secret) {
@@ -176,14 +254,15 @@ export function getSessionFromRequest(request: NextRequest) {
     return null;
   }
 
-  const store = getStore();
-  const session = store.sessions.get(sessionId) ?? null;
+  const persistedSession = loadPersistedSession(sessionId);
 
-  if (!session) {
+  if (!persistedSession) {
     return null;
   }
 
-  session.lastSeenAt = Date.now();
+  const session = hydrateSession(persistedSession);
+  updateSession(session, { lastSeenAt: Date.now() });
+
   return session;
 }
 
@@ -205,7 +284,7 @@ export function getOrCreateSession(request: NextRequest) {
     activeJobId: null,
   };
 
-  getStore().sessions.set(session.id, session);
+  saveSession(session);
   return { session, created: true };
 }
 
@@ -214,7 +293,8 @@ export function destroySession(sessionId: string | null | undefined) {
     return;
   }
 
-  getStore().sessions.delete(sessionId);
+  getStore().previews.delete(sessionId);
+  deletePersistedSession(sessionId);
 }
 
 export function getActiveJobForSession(session: ServerSessionRecord) {
@@ -225,7 +305,7 @@ export function getActiveJobForSession(session: ServerSessionRecord) {
   const job = getStore().jobs.get(session.activeJobId) ?? null;
 
   if (!job) {
-    session.activeJobId = null;
+    updateSession(session, { activeJobId: null });
   }
 
   return job;
@@ -242,11 +322,12 @@ export function serializeJob(job: ServerJobRecord): JobSnapshot {
   };
 }
 
-export function createJob(session: ServerSessionRecord, dryRun: boolean) {
+export function createJob(session: ServerSessionRecord, username: string, dryRun: boolean) {
   const now = Date.now();
   const job: ServerJobRecord = {
     jobId: randomUUID(),
     sessionId: session.id,
+    username,
     dryRun,
     status: "running",
     progress: null,
@@ -257,7 +338,7 @@ export function createJob(session: ServerSessionRecord, dryRun: boolean) {
 
   const store = getStore();
   store.jobs.set(job.jobId, job);
-  session.activeJobId = job.jobId;
+  updateSession(session, { activeJobId: job.jobId });
   return job;
 }
 
@@ -297,5 +378,6 @@ export function finalizeJob(job: ServerJobRecord, report: RunReport) {
   job.report = report;
   job.status = report.status;
   job.updatedAt = Date.now();
+  releaseAccountRun(job.username);
   publishJobEvent(job, report.status === "completed" ? "complete" : "error");
 }
