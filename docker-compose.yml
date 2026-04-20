@@ -1,10 +1,10 @@
 services:
-  yard-ui:
+  shredditweb:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
-      - ./yard-ui/.env.local
+      - ./.env.local
     environment:
       NODE_ENV: production
       PORT: 3000

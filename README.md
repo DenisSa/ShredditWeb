@@ -1,6 +1,6 @@
 # ShredditWeb
 
-ShredditWeb is a server-backed Reddit cleanup tool. The active app lives in `yard-ui` and uses a single Reddit web app, a server-side OAuth callback, a SQLite-backed persistent session, a preview step, a dry-run mode, and a live progress bar for destructive runs.
+ShredditWeb is a server-backed Reddit cleanup tool built as a single Next.js app at the repo root. It uses a single Reddit web app, a server-side OAuth callback, a SQLite-backed persistent session, a preview step, a dry-run mode, and a live progress bar for destructive runs.
 
 ## What it does
 
@@ -24,7 +24,7 @@ ShredditWeb is a server-backed Reddit cleanup tool. The active app lives in `yar
 
 1. Create a Reddit **web app** at `https://www.reddit.com/prefs/apps`.
 2. Set its redirect URI to the exact callback route your app will use.
-3. Add a `yard-ui/.env.local` file with:
+3. Add a `.env.local` file at the repo root with:
 
 ```bash
 REDDIT_CLIENT_ID=your_reddit_web_app_client_id
@@ -45,7 +45,7 @@ By default the server stores persistent sessions and deleted-item history in SQL
 
 ```bash
 pnpm install
-pnpm dev:ui
+pnpm dev
 ```
 
 Open `http://localhost:3000`.
@@ -54,42 +54,36 @@ For local Reddit auth, the app registration and env must match exactly:
 
 - Reddit app type: `web app`
 - Redirect URI in Reddit: `http://localhost:3000/api/auth/reddit/callback`
-- `REDDIT_REDIRECT_URI` in `yard-ui/.env.local`: `http://localhost:3000/api/auth/reddit/callback`
+- `REDDIT_REDIRECT_URI` in `.env.local`: `http://localhost:3000/api/auth/reddit/callback`
 
 ## Docker
 
-If you prefer to run the app in Docker, keep `yard-ui/.env.local` populated and start the service from the repo root:
+If you prefer to run the app in Docker, keep `.env.local` populated and start the service from the repo root:
 
 ```bash
 docker compose up --build
 ```
 
-This uses `docker-compose.yml` to build the `yard-ui` production image and serve it on `http://localhost:3000`.
+This uses `docker-compose.yml` to build the production image and serve it on `http://localhost:3000`.
 
 ## Production Build
 
 ```bash
 pnpm install
 pnpm build
+pnpm start
 ```
-
-The production server lives in `yard-ui`:
-
-- `pnpm build` builds the Next.js app
-- `pnpm --filter shredditweb-ui start` starts the production server
-
-If you need to work on the legacy Node package directly, use `pnpm build:lib` or `pnpm dev:lib`.
 
 Important: this repo is now pinned to Node `24.15.0` LTS and pnpm `10.33.0`. As of April 19, 2026, Node `v25.9.0` is the latest overall release, while `v24.15.0` is the latest LTS line and the intended target for this project.
 
 ## Deployment
 
-Deploy `yard-ui` to a Node-capable host, not static-only hosting:
+Deploy the app to a Node-capable host, not static-only hosting:
 
 - Railway
 - Render
 - Fly.io
-- Any Node host that can run `pnpm --filter shredditweb-ui start`
+- Any Node host that can run `pnpm start`
 
 Make sure the deployed callback route exactly matches `REDDIT_REDIRECT_URI`, for example:
 
@@ -97,11 +91,10 @@ Make sure the deployed callback route exactly matches `REDDIT_REDIRECT_URI`, for
 
 ## Project layout
 
-- `yard-ui`: active Next.js application
-- `yard-ui/lib/server/shreddit-core.ts`: server-side Reddit OAuth, preview, token refresh, and shred logic
-- `yard-ui/lib/server/shreddit-db.ts`: SQLite persistence for sessions and deleted-item history
-- `yard-ui/lib/server/shreddit-store.ts`: persistent session store plus in-memory preview/job state
-- `yard-ui/lib/shreddit.ts`: browser client helpers for the server APIs
-- `yard-ui/components/shreddit-app.tsx`: single-page UI flow
-- `yard-lib`: legacy Node script reference, no longer the intended deployment target
-- `pnpm-workspace.yaml`: workspace definition for the UI and legacy library packages
+- `app`: Next.js App Router entrypoints and API routes
+- `lib/server/shreddit-core.ts`: server-side Reddit OAuth, preview, token refresh, and shred logic
+- `lib/server/shreddit-db.ts`: SQLite persistence for sessions and deleted-item history
+- `lib/server/shreddit-store.ts`: persistent session store plus in-memory preview/job state
+- `lib/shreddit.ts`: browser client helpers for the server APIs
+- `components/shreddit-app.tsx`: single-page UI flow
+- `tests`: Vitest coverage for scheduling, storage, and run coordination

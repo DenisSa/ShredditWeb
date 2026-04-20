@@ -9,9 +9,7 @@ FROM base AS deps
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY yard-ui/package.json yard-ui/package.json
-COPY yard-lib/package.json yard-lib/package.json
+COPY package.json pnpm-lock.yaml ./
 
 RUN pnpm install --frozen-lockfile
 
@@ -21,7 +19,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN pnpm --filter shredditweb-ui build
+RUN pnpm build
 
 FROM base AS runner
 
@@ -30,10 +28,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml /app/.npmrc ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/yard-ui ./yard-ui
+COPY --from=builder /app ./
 
 EXPOSE 3000
 
-CMD ["pnpm", "--filter", "shredditweb-ui", "exec", "next", "start", "-H", "0.0.0.0", "-p", "3000"]
+CMD ["pnpm", "exec", "next", "start", "-H", "0.0.0.0", "-p", "3000"]

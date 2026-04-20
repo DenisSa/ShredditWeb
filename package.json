@@ -1,18 +1,37 @@
 {
-  "name": "shredditweb-workspace",
+  "name": "shredditweb",
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24.15.0 <25"
   },
   "scripts": {
-    "dev:ui": "pnpm --filter shredditweb-ui dev",
-    "dev:lib": "pnpm --filter shredditweb-lib dev",
-    "build": "pnpm --filter shredditweb-ui build",
-    "build:lib": "pnpm --filter shredditweb-lib build",
-    "build:all": "pnpm -r build",
-    "lint": "pnpm --filter shredditweb-ui lint",
-    "lint:lib": "pnpm --filter shredditweb-lib lint",
-    "lint:all": "pnpm -r lint"
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "@nextui-org/system": "2.0.7",
+    "@nextui-org/theme": "2.1.6",
+    "next": "16.2.4",
+    "next-themes": "^0.2.1",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.5.7",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "autoprefixer": "10.4.15",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.4",
+    "postcss": "8.4.29",
+    "tailwindcss": "3.3.3",
+    "typescript": "6.0.3",
+    "vitest": "^3.2.4"
   }
 }

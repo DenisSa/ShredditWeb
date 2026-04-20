@@ -93,16 +93,6 @@ export async function saveAccountSettings(input: {
   });
 }
 
-export async function updateDeletionHistoryPreference(storeDeletionHistory: boolean) {
-  return fetchJson<{ storeDeletionHistory: boolean }>("/api/settings/history", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ storeDeletionHistory }),
-  });
-}
-
 export async function requestPreview(rules?: Pick<CleanupSettings, "minAgeDays" | "maxScore">) {
   return fetchJson<PreviewResult>("/api/preview", {
     method: "POST",
@@ -136,18 +126,6 @@ export async function logoutRedditSession() {
   if (!response.ok) {
     const payload = await readResponsePayload(response);
     throw new Error(getErrorMessage(payload, "Unable to clear the current Reddit session."));
-  }
-}
-
-export async function disconnectRedditAccount() {
-  const response = await fetch("/api/auth/disconnect", {
-    method: "POST",
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    const payload = await readResponsePayload(response);
-    throw new Error(getErrorMessage(payload, "Unable to disconnect the current Reddit account."));
   }
 }
 

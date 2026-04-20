@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".nvmrc"
+      - ".dockerignore"
+      - ".env.example"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "README.md"
+      - "LICENSE"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "app/**"
+      - "components/**"
+      - "config/**"
+      - "lib/**"
+      - "public/**"
+      - "styles/**"
+      - "tests/**"
+      - "types/**"
+      - "eslint.config.mjs"
+      - "instrumentation.ts"
+      - "next.config.js"
+      - "postcss.config.js"
+      - "tailwind.config.js"
+      - "tsconfig.json"
+      - "vitest.config.ts"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".nvmrc"
+      - ".dockerignore"
+      - ".env.example"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "README.md"
+      - "LICENSE"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "app/**"
+      - "components/**"
+      - "config/**"
+      - "lib/**"
+      - "public/**"
+      - "styles/**"
+      - "tests/**"
+      - "types/**"
+      - "eslint.config.mjs"
+      - "instrumentation.ts"
+      - "next.config.js"
+      - "postcss.config.js"
+      - "tailwind.config.js"
+      - "tsconfig.json"
+      - "vitest.config.ts"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Build, lint, and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test:run
