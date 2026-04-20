@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { buildPreview } from "@/lib/server/shreddit-core";
 import { jsonError, jsonNoStore } from "@/lib/server/shreddit-responses";
-import { getSessionFromRequest } from "@/lib/server/shreddit-store";
+import { getSessionFromRequest, updateSession } from "@/lib/server/shreddit-store";
 
 export const runtime = "nodejs";
 
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const preview = await buildPreview(session);
-    session.preview = preview;
+    updateSession(session, { preview });
     return jsonNoStore(preview);
   } catch (error) {
     return jsonError(error);

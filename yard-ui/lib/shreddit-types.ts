@@ -1,4 +1,5 @@
 export const REQUIRED_SCOPES = ["identity", "history", "edit"] as const;
+export const DEFAULT_STORE_DELETION_HISTORY = true;
 
 export type RequiredScope = (typeof REQUIRED_SCOPES)[number];
 
@@ -92,6 +93,10 @@ export type JobSnapshot = {
   updatedAt: number;
 };
 
+export type AccountPreferences = {
+  storeDeletionHistory: boolean;
+};
+
 export type SessionSummary = {
   authConfigured: boolean;
   configurationError: string | null;
@@ -103,6 +108,7 @@ export type SessionSummary = {
   scope: string[];
   expiresAt: number | null;
   activeJob: JobSnapshot | null;
+  preferences: AccountPreferences;
 };
 
 export type RunStartResponse = {

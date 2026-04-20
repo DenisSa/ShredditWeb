@@ -15,6 +15,7 @@ export type {
   RunReport,
   SessionSummary,
 } from "@/lib/shreddit-types";
+export { DEFAULT_STORE_DELETION_HISTORY } from "@/lib/shreddit-types";
 
 function getErrorMessage(payload: unknown, fallback: string) {
   if (
@@ -65,6 +66,16 @@ async function fetchJson<T>(input: string, init?: RequestInit) {
 
 export async function fetchSessionSummary() {
   return fetchJson<SessionSummary>("/api/session");
+}
+
+export async function updateDeletionHistoryPreference(storeDeletionHistory: boolean) {
+  return fetchJson<{ storeDeletionHistory: boolean }>("/api/settings/history", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ storeDeletionHistory }),
+  });
 }
 
 export async function requestPreview() {

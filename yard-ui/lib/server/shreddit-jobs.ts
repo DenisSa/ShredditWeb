@@ -62,7 +62,7 @@ function launchJob(
 ) {
   void (async () => {
     try {
-      const report = await runShred(session, preview, dryRun, (progress) => {
+      const report = await runShred(session, preview, dryRun, job.jobId, (progress) => {
         setJobProgress(job, progress);
       });
 

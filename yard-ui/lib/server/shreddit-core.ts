@@ -3,6 +3,10 @@ import "server-only";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import {
+  getStoreDeletionHistoryPreference,
+  insertDeletedItem,
+} from "@/lib/server/shreddit-db";
+import {
   PreviewItem,
   PreviewProgress,
   PreviewResult,
@@ -13,7 +17,7 @@ import {
   SessionSummary,
   ShredRules,
 } from "@/lib/shreddit-types";
-import { ServerSessionRecord } from "@/lib/server/shreddit-store";
+import { ServerSessionRecord, updateSession } from "@/lib/server/shreddit-store";
 
 const COMMENT_EDIT_DELAY_MS = 1100;
 const DELETE_DELAY_MS = 200;
@@ -362,22 +366,23 @@ async function refreshRedditGrant(session: ServerSessionRecord, force = false) {
     );
 
     if (!tokenData.access_token || !tokenData.expires_in) {
-      session.reddit = null;
+      updateSession(session, { reddit: null });
       throw new RedditAuthError("Reddit returned an incomplete refresh-token response.");
     }
 
-    session.reddit = {
+    const redditGrant = {
       ...session.reddit,
       accessToken: tokenData.access_token,
       obtainedAt: Date.now(),
       expiresAt: Date.now() + tokenData.expires_in * 1000,
       scope: tokenData.scope ? normalizeScopes(tokenData.scope) : session.reddit.scope,
     };
+    updateSession(session, { reddit: redditGrant });
 
-    return session.reddit;
+    return redditGrant;
   } catch (error) {
     if (error instanceof RedditAuthError) {
-      session.reddit = null;
+      updateSession(session, { reddit: null });
     }
 
     throw error;
@@ -694,9 +699,11 @@ export async function runShred(
   session: ServerSessionRecord,
   preview: PreviewResult,
   dryRun: boolean,
+  jobId?: string,
   onProgress?: (progress: RunProgress) => void,
 ) {
   const reddit = await refreshRedditGrant(session);
+  const storeDeletionHistory = getStoreDeletionHistoryPreference(reddit.username);
   const failures: RunFailure[] = [];
   const rules = preview.rules;
 
@@ -720,6 +727,8 @@ export async function runShred(
 
   for (const item of preview.eligibleItems) {
     const label = summarizeItem(item);
+    const shouldOverwrite = itemNeedsOverwrite(item);
+    let editedBeforeDelete = false;
 
     try {
       if (dryRun) {
@@ -735,7 +744,7 @@ export async function runShred(
 
         await delay(DRY_RUN_DELAY_MS);
       } else {
-        if (itemNeedsOverwrite(item)) {
+        if (shouldOverwrite) {
           onProgress?.({
             phase: "editing",
             processed,
@@ -748,6 +757,7 @@ export async function runShred(
 
           await editThing(session, item);
           edited += 1;
+          editedBeforeDelete = true;
           await delay(COMMENT_EDIT_DELAY_MS);
         }
 
@@ -763,13 +773,24 @@ export async function runShred(
 
         await deleteThing(session, item);
         deleted += 1;
+        if (storeDeletionHistory) {
+          insertDeletedItem({
+            deletedAt: Date.now(),
+            sessionId: session.id,
+            jobId: jobId ?? null,
+            username: reddit.username,
+            item,
+            editedBeforeDelete,
+            rules,
+          });
+        }
         await delay(DELETE_DELAY_MS);
       }
     } catch (error) {
       failures.push({
         id: item.id,
         label,
-        step: dryRun ? "dry-run" : itemNeedsOverwrite(item) ? "edit/delete" : "delete",
+        step: dryRun ? "dry-run" : shouldOverwrite ? "edit/delete" : "delete",
         message: toUserMessage(error),
         permalink: item.permalink,
       });

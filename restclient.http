@@ -3,3 +3,16 @@ POST https://oauth.reddit.com/api/editusertext
 &text=This+is+a+test+posst+from+Postman
 Authorization: bearer 1234567890
 User-Agent: PostmanRuntime/7.28.0
+
+###
+
+GET http://localhost:3000/api/history/deleted?limit=50
+
+###
+
+POST http://localhost:3000/api/settings/history
+Content-Type: application/json
+
+{
+  "storeDeletionHistory": false
+}
