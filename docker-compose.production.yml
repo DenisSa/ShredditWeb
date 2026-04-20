@@ -1,0 +1,23 @@
+services:
+  shredditweb:
+    image: ${SHREDDIT_IMAGE:?Set SHREDDIT_IMAGE in .env.production.}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:?Set REDDIT_CLIENT_ID in .env.production.}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:?Set REDDIT_CLIENT_SECRET in .env.production.}
+      REDDIT_REDIRECT_URI: ${REDDIT_REDIRECT_URI:?Set REDDIT_REDIRECT_URI in .env.production.}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env.production.}
+      SQLITE_PATH: /data/shreddit.sqlite
+      NEXT_PUBLIC_MIN_AGE_DAYS: ${NEXT_PUBLIC_MIN_AGE_DAYS:-7}
+      NEXT_PUBLIC_MAX_SCORE: ${NEXT_PUBLIC_MAX_SCORE:-100}
+      SESSION_MAX_AGE_DAYS: ${SESSION_MAX_AGE_DAYS:-30}
+      SCHEDULER_POLL_INTERVAL_MS: ${SCHEDULER_POLL_INTERVAL_MS:-60000}
+    ports:
+      - "${SHREDDIT_BIND:-0.0.0.0}:${SHREDDIT_PORT:-3000}:3000"
+    volumes:
+      - shreddit-data:/data
+    restart: unless-stopped
+
+volumes:
+  shreddit-data:

@@ -66,6 +66,16 @@ docker compose up --build
 
 This uses `docker-compose.yml` to build the production image and serve it on `http://localhost:3000`.
 
+For a Raspberry Pi or any host that should pull a prebuilt image from GitHub Container Registry, use the production compose file instead:
+
+```bash
+cp .env.production.example .env.production
+docker compose --env-file .env.production -f docker-compose.production.yml pull
+docker compose --env-file .env.production -f docker-compose.production.yml up -d
+```
+
+`docker-compose.production.yml` mounts a named Docker volume at `/data` and pins SQLite to `/data/shreddit.sqlite`, so sessions, schedules, and deleted-history records survive container restarts and image updates.
+
 ## Production Build
 
 ```bash
@@ -88,6 +98,99 @@ Deploy the app to a Node-capable host, not static-only hosting:
 Make sure the deployed callback route exactly matches `REDDIT_REDIRECT_URI`, for example:
 
 - `https://your-domain.example/api/auth/reddit/callback`
+
+## Raspberry Pi Deployment
+
+The repo now includes two files for a GHCR-backed deployment flow:
+
+- `docker-compose.production.yml`: runs the prebuilt container image and persists SQLite data in the `shreddit-data` Docker volume.
+- `.env.production.example`: template for the image reference, Reddit OAuth config, and production bind settings.
+
+To prepare the Pi:
+
+1. Copy `.env.production.example` to `.env.production`.
+2. Set `SHREDDIT_IMAGE` to the image published by this repo, for example `ghcr.io/your-github-user/shredditweb:latest`.
+3. Set `REDDIT_REDIRECT_URI` to the exact public callback URL you will expose.
+4. If the package is private, log in once with a GitHub personal access token (classic) that has `read:packages`.
+
+```bash
+echo "$GHCR_READ_PACKAGES_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+docker compose --env-file .env.production -f docker-compose.production.yml pull
+docker compose --env-file .env.production -f docker-compose.production.yml up -d
+```
+
+The publish workflow at `.github/workflows/publish-image.yml` builds and pushes a `linux/arm64` image to GHCR on pushes to `main`. It publishes a rolling `latest` tag plus a `sha-<commit>` tag so you can pin a specific release if you want to roll back.
+
+## Pi Update Options
+
+The simplest low-maintenance updater is a small `systemd` timer on the Pi that runs `docker compose pull` and `docker compose up -d` on a schedule. This keeps the deployment model one-way: GitHub publishes the image, the Pi only refreshes it.
+
+Example service unit:
+
+```ini
+[Unit]
+Description=Refresh ShredditWeb from GHCR
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/shredditweb
+ExecStart=/usr/bin/docker compose --env-file .env.production -f docker-compose.production.yml pull
+ExecStart=/usr/bin/docker compose --env-file .env.production -f docker-compose.production.yml up -d
+```
+
+Example timer unit:
+
+```ini
+[Unit]
+Description=Check for new ShredditWeb images
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=15m
+Unit=shredditweb-refresh.service
+
+[Install]
+WantedBy=timers.target
+```
+
+If you prefer push-based deployment instead, the other common pattern is an SSH step in GitHub Actions that connects to the Pi after a successful image publish and runs the same two commands remotely. That gives you immediate deploys, but it also means storing SSH credentials in GitHub and letting GitHub reach your Pi over the network.
+
+## HTTPS and Reverse Proxy
+
+For production Reddit OAuth, the external callback URL must exactly match both the Reddit app registration and `REDDIT_REDIRECT_URI`. If your public URL is `https://cleanup.example.com`, the callback must be:
+
+```text
+https://cleanup.example.com/api/auth/reddit/callback
+```
+
+When a reverse proxy runs on the same Pi, keep `SHREDDIT_BIND=127.0.0.1` so the app container only listens locally and let the proxy terminate TLS.
+
+Caddy is the lowest-maintenance option because it handles Let's Encrypt for you automatically:
+
+```caddyfile
+cleanup.example.com {
+  reverse_proxy 127.0.0.1:3000
+}
+```
+
+If you prefer Nginx, use a server block that forwards the original host and HTTPS information:
+
+```nginx
+server {
+  server_name cleanup.example.com;
+
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+}
+```
+
+If you later add automatic deployments, it is safest to avoid deploying during an active cleanup run because active jobs live in memory and a container restart will interrupt them.
 
 ## Project layout
 
