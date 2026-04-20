@@ -10,8 +10,14 @@ import {
 } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
+  AccountSchedule,
+  CleanupSettings,
   DEFAULT_STORE_DELETION_HISTORY,
   PreviewItem,
+  RunReport,
+  ScheduledRunReasonCode,
+  ScheduledRunStatus,
+  ScheduledRunSummary,
   ShredRules,
 } from "@/lib/shreddit-types";
 
@@ -31,6 +37,23 @@ export type PersistedSessionRecord = {
   oauthState: string | null;
   reddit: PersistedRedditGrant | null;
   activeJobId: string | null;
+};
+
+export type PersistedAccountAuth = {
+  username: string;
+  grant: PersistedRedditGrant | null;
+  requiresReconnect: boolean;
+  updatedAt: number;
+};
+
+export type PersistedAccountSettings = CleanupSettings & {
+  username: string;
+  updatedAt: number;
+};
+
+export type PersistedAccountSchedule = AccountSchedule & {
+  username: string;
+  updatedAt: number;
 };
 
 export type DeletedItemRecord = {
@@ -54,6 +77,16 @@ export type DeletedItemHistoryEntry = {
   rules: Pick<ShredRules, "minAgeDays" | "maxScore">;
 };
 
+export type ScheduledRunRecord = {
+  username: string;
+  status: ScheduledRunStatus;
+  startedAt: number;
+  finishedAt: number;
+  message: string | null;
+  reasonCode: ScheduledRunReasonCode | null;
+  report: RunReport | null;
+};
+
 type SessionRow = {
   id: string;
   created_at: number;
@@ -63,14 +96,55 @@ type SessionRow = {
   active_job_id: string | null;
 };
 
-type AccountPreferenceRow = {
+type LegacyAccountPreferenceRow = {
   username: string;
   store_deletion_history: number;
   updated_at: number;
 };
 
+type AccountAuthRow = {
+  username: string;
+  reddit_grant_json: string | null;
+  requires_reconnect: number;
+  updated_at: number;
+};
+
+type AccountSettingsRow = {
+  username: string;
+  store_deletion_history: number;
+  min_age_days: number;
+  max_score: number;
+  updated_at: number;
+};
+
+type AccountScheduleRow = {
+  username: string;
+  enabled: number;
+  cadence: AccountSchedule["cadence"];
+  minute_utc: number;
+  hour_utc: number | null;
+  weekday_utc: number | null;
+  next_run_at: number | null;
+  last_run_at: number | null;
+  last_run_status: ScheduledRunStatus | null;
+  last_run_message: string | null;
+  updated_at: number;
+};
+
+type ScheduledRunRow = {
+  id: number;
+  username: string;
+  status: ScheduledRunStatus;
+  started_at: number;
+  finished_at: number;
+  message: string | null;
+  reason_code: ScheduledRunReasonCode | null;
+  report_json: string | null;
+};
+
 type GlobalWithDatabase = typeof globalThis & {
   __shredditDatabase?: DatabaseSync;
+  __shredditDatabasePath?: string;
 };
 
 const DEFAULT_SQLITE_PATH = resolve(process.cwd(), "data", "shreddit.sqlite");
@@ -187,6 +261,53 @@ function ensureSchema(database: DatabaseSync) {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS reddit_accounts (
+      username TEXT PRIMARY KEY COLLATE NOCASE,
+      reddit_grant_json TEXT,
+      requires_reconnect INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS account_settings (
+      username TEXT PRIMARY KEY COLLATE NOCASE,
+      store_deletion_history INTEGER NOT NULL DEFAULT 1,
+      min_age_days INTEGER NOT NULL,
+      max_score INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS account_schedules (
+      username TEXT PRIMARY KEY COLLATE NOCASE,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      cadence TEXT NOT NULL,
+      minute_utc INTEGER NOT NULL,
+      hour_utc INTEGER,
+      weekday_utc INTEGER,
+      next_run_at INTEGER,
+      last_run_at INTEGER,
+      last_run_status TEXT,
+      last_run_message TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS account_schedules_next_run_idx
+      ON account_schedules (enabled, next_run_at);
+
+    CREATE TABLE IF NOT EXISTS scheduled_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL COLLATE NOCASE,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER NOT NULL,
+      message TEXT,
+      reason_code TEXT,
+      report_json TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS scheduled_runs_username_created_idx
+      ON scheduled_runs (username, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS deleted_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       deleted_at INTEGER NOT NULL,
@@ -219,17 +340,75 @@ function ensureSchema(database: DatabaseSync) {
 
 function getDatabase() {
   const globalWithDatabase = globalThis as GlobalWithDatabase;
+  const databasePath = getDatabasePath();
+
+  if (
+    globalWithDatabase.__shredditDatabase &&
+    globalWithDatabase.__shredditDatabasePath &&
+    globalWithDatabase.__shredditDatabasePath !== databasePath
+  ) {
+    globalWithDatabase.__shredditDatabase.close();
+    globalWithDatabase.__shredditDatabase = undefined;
+    globalWithDatabase.__shredditDatabasePath = undefined;
+  }
 
   if (!globalWithDatabase.__shredditDatabase) {
-    const databasePath = getDatabasePath();
     mkdirSync(dirname(databasePath), { recursive: true });
 
     const database = new DatabaseSync(databasePath);
     ensureSchema(database);
     globalWithDatabase.__shredditDatabase = database;
+    globalWithDatabase.__shredditDatabasePath = databasePath;
   }
 
   return globalWithDatabase.__shredditDatabase;
+}
+
+function mapAccountSettingsRow(row: AccountSettingsRow): PersistedAccountSettings {
+  return {
+    username: row.username,
+    storeDeletionHistory: row.store_deletion_history === 1,
+    minAgeDays: row.min_age_days,
+    maxScore: row.max_score,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAccountScheduleRow(row: AccountScheduleRow): PersistedAccountSchedule {
+  return {
+    username: row.username,
+    enabled: row.enabled === 1,
+    cadence: row.cadence,
+    minuteUtc: row.minute_utc,
+    hourUtc: row.hour_utc,
+    weekdayUtc: row.weekday_utc,
+    nextRunAt: row.next_run_at,
+    lastRunAt: row.last_run_at,
+    lastRunStatus: row.last_run_status,
+    lastRunMessage: row.last_run_message,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapScheduledRunRow(row: ScheduledRunRow): ScheduledRunSummary {
+  return {
+    id: row.id,
+    username: row.username,
+    status: row.status,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    message: row.message,
+    reasonCode: row.reason_code,
+    report: row.report_json ? (JSON.parse(row.report_json) as RunReport) : null,
+  };
+}
+
+export function resetDatabaseForTests() {
+  const globalWithDatabase = globalThis as GlobalWithDatabase;
+
+  globalWithDatabase.__shredditDatabase?.close();
+  globalWithDatabase.__shredditDatabase = undefined;
+  globalWithDatabase.__shredditDatabasePath = undefined;
 }
 
 export function upsertPersistedSession(session: PersistedSessionRecord) {
@@ -312,8 +491,87 @@ export function deleteExpiredPersistedSessions(expireBefore: number) {
   return expiredRows.map((row) => row.id);
 }
 
-export function getStoreDeletionHistoryPreference(username: string) {
+export function upsertPersistedAccountGrant(grant: PersistedRedditGrant) {
+  const updatedAt = Date.now();
+
+  getDatabase()
+    .prepare(`
+      INSERT INTO reddit_accounts (
+        username,
+        reddit_grant_json,
+        requires_reconnect,
+        updated_at
+      ) VALUES (?, ?, 0, ?)
+      ON CONFLICT(username) DO UPDATE SET
+        reddit_grant_json = excluded.reddit_grant_json,
+        requires_reconnect = 0,
+        updated_at = excluded.updated_at
+    `)
+    .run(grant.username, encryptJson(grant), updatedAt);
+
+  return {
+    username: grant.username,
+    grant,
+    requiresReconnect: false,
+    updatedAt,
+  } satisfies PersistedAccountAuth;
+}
+
+export function loadPersistedAccountAuth(username: string) {
   const row = getDatabase()
+    .prepare(`
+      SELECT
+        username,
+        reddit_grant_json,
+        requires_reconnect,
+        updated_at
+      FROM reddit_accounts
+      WHERE username = ?
+    `)
+    .get(username) as AccountAuthRow | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  const { grant } = parseStoredGrant(row.reddit_grant_json);
+
+  return {
+    username: row.username,
+    grant,
+    requiresReconnect: row.requires_reconnect === 1,
+    updatedAt: row.updated_at,
+  } satisfies PersistedAccountAuth;
+}
+
+export function clearPersistedAccountGrant(username: string, requiresReconnect = false) {
+  const updatedAt = Date.now();
+
+  getDatabase()
+    .prepare(`
+      INSERT INTO reddit_accounts (
+        username,
+        reddit_grant_json,
+        requires_reconnect,
+        updated_at
+      ) VALUES (?, NULL, ?, ?)
+      ON CONFLICT(username) DO UPDATE SET
+        reddit_grant_json = NULL,
+        requires_reconnect = excluded.requires_reconnect,
+        updated_at = excluded.updated_at
+    `)
+    .run(username, requiresReconnect ? 1 : 0, updatedAt);
+
+  return {
+    username,
+    grant: null,
+    requiresReconnect,
+    updatedAt,
+  } satisfies PersistedAccountAuth;
+}
+
+function loadLegacyAccountPreference(username: string) {
+  return getDatabase()
     .prepare(`
       SELECT
         username,
@@ -322,36 +580,309 @@ export function getStoreDeletionHistoryPreference(username: string) {
       FROM account_preferences
       WHERE username = ?
     `)
-    .get(username) as AccountPreferenceRow | undefined;
-
-  if (!row) {
-    return DEFAULT_STORE_DELETION_HISTORY;
-  }
-
-  return row.store_deletion_history === 1;
+    .get(username) as LegacyAccountPreferenceRow | undefined;
 }
 
-export function setStoreDeletionHistoryPreference(username: string, storeDeletionHistory: boolean) {
+export function loadAccountSettings(username: string) {
+  const row = getDatabase()
+    .prepare(`
+      SELECT
+        username,
+        store_deletion_history,
+        min_age_days,
+        max_score,
+        updated_at
+      FROM account_settings
+      WHERE username = ?
+    `)
+    .get(username) as AccountSettingsRow | undefined;
+
+  return row ? mapAccountSettingsRow(row) : null;
+}
+
+export function ensureAccountSettings(username: string, defaults: CleanupSettings) {
+  const existing = loadAccountSettings(username);
+
+  if (existing) {
+    return existing;
+  }
+
+  const legacy = loadLegacyAccountPreference(username);
+  const seeded = {
+    storeDeletionHistory: legacy
+      ? legacy.store_deletion_history === 1
+      : defaults.storeDeletionHistory ?? DEFAULT_STORE_DELETION_HISTORY,
+    minAgeDays: defaults.minAgeDays,
+    maxScore: defaults.maxScore,
+  } satisfies CleanupSettings;
+
+  return upsertAccountSettings(username, seeded);
+}
+
+export function upsertAccountSettings(username: string, settings: CleanupSettings) {
   const updatedAt = Date.now();
 
   getDatabase()
     .prepare(`
-      INSERT INTO account_preferences (
+      INSERT INTO account_settings (
         username,
         store_deletion_history,
+        min_age_days,
+        max_score,
         updated_at
-      ) VALUES (?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(username) DO UPDATE SET
         store_deletion_history = excluded.store_deletion_history,
+        min_age_days = excluded.min_age_days,
+        max_score = excluded.max_score,
         updated_at = excluded.updated_at
     `)
-    .run(username, storeDeletionHistory ? 1 : 0, updatedAt);
+    .run(
+      username,
+      settings.storeDeletionHistory ? 1 : 0,
+      settings.minAgeDays,
+      settings.maxScore,
+      updatedAt,
+    );
 
   return {
     username,
-    storeDeletionHistory,
+    ...settings,
     updatedAt,
-  };
+  } satisfies PersistedAccountSettings;
+}
+
+export function getStoreDeletionHistoryPreference(username: string) {
+  const settings = loadAccountSettings(username);
+
+  if (settings) {
+    return settings.storeDeletionHistory;
+  }
+
+  const legacy = loadLegacyAccountPreference(username);
+  return legacy ? legacy.store_deletion_history === 1 : DEFAULT_STORE_DELETION_HISTORY;
+}
+
+export function setStoreDeletionHistoryPreference(
+  username: string,
+  storeDeletionHistory: boolean,
+  defaults: CleanupSettings,
+) {
+  const current = loadAccountSettings(username) ?? ensureAccountSettings(username, defaults);
+
+  return upsertAccountSettings(username, {
+    ...current,
+    storeDeletionHistory,
+  });
+}
+
+export function loadAccountSchedule(username: string) {
+  const row = getDatabase()
+    .prepare(`
+      SELECT
+        username,
+        enabled,
+        cadence,
+        minute_utc,
+        hour_utc,
+        weekday_utc,
+        next_run_at,
+        last_run_at,
+        last_run_status,
+        last_run_message,
+        updated_at
+      FROM account_schedules
+      WHERE username = ?
+    `)
+    .get(username) as AccountScheduleRow | undefined;
+
+  return row ? mapAccountScheduleRow(row) : null;
+}
+
+export function upsertAccountSchedule(
+  username: string,
+  schedule: Omit<PersistedAccountSchedule, "username" | "updatedAt">,
+) {
+  const updatedAt = Date.now();
+
+  getDatabase()
+    .prepare(`
+      INSERT INTO account_schedules (
+        username,
+        enabled,
+        cadence,
+        minute_utc,
+        hour_utc,
+        weekday_utc,
+        next_run_at,
+        last_run_at,
+        last_run_status,
+        last_run_message,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(username) DO UPDATE SET
+        enabled = excluded.enabled,
+        cadence = excluded.cadence,
+        minute_utc = excluded.minute_utc,
+        hour_utc = excluded.hour_utc,
+        weekday_utc = excluded.weekday_utc,
+        next_run_at = excluded.next_run_at,
+        last_run_at = excluded.last_run_at,
+        last_run_status = excluded.last_run_status,
+        last_run_message = excluded.last_run_message,
+        updated_at = excluded.updated_at
+    `)
+    .run(
+      username,
+      schedule.enabled ? 1 : 0,
+      schedule.cadence,
+      schedule.minuteUtc,
+      schedule.hourUtc,
+      schedule.weekdayUtc,
+      schedule.nextRunAt,
+      schedule.lastRunAt,
+      schedule.lastRunStatus,
+      schedule.lastRunMessage,
+      updatedAt,
+    );
+
+  return {
+    username,
+    ...schedule,
+    updatedAt,
+  } satisfies PersistedAccountSchedule;
+}
+
+export function updateAccountScheduleRunState(
+  username: string,
+  updates: Pick<AccountSchedule, "enabled" | "nextRunAt" | "lastRunAt" | "lastRunStatus" | "lastRunMessage">,
+) {
+  const current = loadAccountSchedule(username);
+
+  if (!current) {
+    return null;
+  }
+
+  return upsertAccountSchedule(username, {
+    ...current,
+    ...updates,
+  });
+}
+
+export function disableAccountSchedule(username: string, message: string, lastRunStatus: ScheduledRunStatus = "stopped") {
+  const current = loadAccountSchedule(username);
+
+  if (!current) {
+    return null;
+  }
+
+  return upsertAccountSchedule(username, {
+    ...current,
+    enabled: false,
+    nextRunAt: null,
+    lastRunAt: Date.now(),
+    lastRunStatus,
+    lastRunMessage: message,
+  });
+}
+
+export function listDueSchedules(now: number) {
+  const rows = getDatabase()
+    .prepare(`
+      SELECT
+        username,
+        enabled,
+        cadence,
+        minute_utc,
+        hour_utc,
+        weekday_utc,
+        next_run_at,
+        last_run_at,
+        last_run_status,
+        last_run_message,
+        updated_at
+      FROM account_schedules
+      WHERE enabled = 1
+        AND next_run_at IS NOT NULL
+        AND next_run_at <= ?
+      ORDER BY next_run_at ASC
+    `)
+    .all(now) as AccountScheduleRow[];
+
+  return rows.map(mapAccountScheduleRow);
+}
+
+export function insertScheduledRun(record: ScheduledRunRecord) {
+  const createdAt = Date.now();
+  const result = getDatabase()
+    .prepare(`
+      INSERT INTO scheduled_runs (
+        username,
+        status,
+        started_at,
+        finished_at,
+        message,
+        reason_code,
+        report_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      record.username,
+      record.status,
+      record.startedAt,
+      record.finishedAt,
+      record.message,
+      record.reasonCode,
+      record.report ? JSON.stringify(record.report) : null,
+      createdAt,
+    );
+
+  return Number(result.lastInsertRowid);
+}
+
+export function listScheduledRunsForUsername(username: string, limit = 20) {
+  const rows = getDatabase()
+    .prepare(`
+      SELECT
+        id,
+        username,
+        status,
+        started_at,
+        finished_at,
+        message,
+        reason_code,
+        report_json
+      FROM scheduled_runs
+      WHERE username = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `)
+    .all(username, limit) as ScheduledRunRow[];
+
+  return rows.map(mapScheduledRunRow);
+}
+
+export function getLatestScheduledRunForUsername(username: string) {
+  const row = getDatabase()
+    .prepare(`
+      SELECT
+        id,
+        username,
+        status,
+        started_at,
+        finished_at,
+        message,
+        reason_code,
+        report_json
+      FROM scheduled_runs
+      WHERE username = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `)
+    .get(username) as ScheduledRunRow | undefined;
+
+  return row ? mapScheduledRunRow(row) : null;
 }
 
 export function insertDeletedItem(record: DeletedItemRecord) {
@@ -400,7 +931,7 @@ export function insertDeletedItem(record: DeletedItemRecord) {
     );
 }
 
-export function listDeletedItemsForSession(sessionId: string, limit = 100) {
+export function listDeletedItemsForUsername(username: string, limit = 100) {
   const rows = getDatabase()
     .prepare(`
       SELECT
@@ -424,11 +955,11 @@ export function listDeletedItemsForSession(sessionId: string, limit = 100) {
         rules_min_age_days,
         rules_max_score
       FROM deleted_items
-      WHERE session_id = ?
+      WHERE username = ?
       ORDER BY deleted_at DESC
       LIMIT ?
     `)
-    .all(sessionId, limit) as Array<{
+    .all(username, limit) as Array<{
     id: number;
     deleted_at: number;
     session_id: string;

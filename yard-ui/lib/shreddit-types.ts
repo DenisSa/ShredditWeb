@@ -1,12 +1,20 @@
 export const REQUIRED_SCOPES = ["identity", "history", "edit"] as const;
 export const DEFAULT_STORE_DELETION_HISTORY = true;
+export const SCHEDULE_CADENCES = ["hourly", "daily", "weekly"] as const;
 
 export type RequiredScope = (typeof REQUIRED_SCOPES)[number];
+export type ScheduleCadence = (typeof SCHEDULE_CADENCES)[number];
 
 export type ShredRules = {
   minAgeDays: number;
   maxScore: number;
   cutoffUnix: number;
+};
+
+export type CleanupSettings = {
+  minAgeDays: number;
+  maxScore: number;
+  storeDeletionHistory: boolean;
 };
 
 export type ContentKind = "comment" | "selfPost" | "linkPost";
@@ -49,6 +57,7 @@ export type PreviewResult = {
 export type RunProgress = {
   phase: "starting" | "editing" | "deleting" | "dry-run" | "done";
   processed: number;
+  edited: number;
   deleted: number;
   failed: number;
   total: number;
@@ -97,6 +106,32 @@ export type AccountPreferences = {
   storeDeletionHistory: boolean;
 };
 
+export type ScheduledRunStatus = "completed" | "stopped" | "skipped";
+export type ScheduledRunReasonCode = "already-running" | "auth-expired" | "connectivity" | "unexpected";
+
+export type AccountSchedule = {
+  enabled: boolean;
+  cadence: ScheduleCadence;
+  minuteUtc: number;
+  hourUtc: number | null;
+  weekdayUtc: number | null;
+  nextRunAt: number | null;
+  lastRunAt: number | null;
+  lastRunStatus: ScheduledRunStatus | null;
+  lastRunMessage: string | null;
+};
+
+export type ScheduledRunSummary = {
+  id: number;
+  username: string;
+  status: ScheduledRunStatus;
+  startedAt: number;
+  finishedAt: number;
+  message: string | null;
+  reasonCode: ScheduledRunReasonCode | null;
+  report: RunReport | null;
+};
+
 export type SessionSummary = {
   authConfigured: boolean;
   configurationError: string | null;
@@ -108,7 +143,11 @@ export type SessionSummary = {
   scope: string[];
   expiresAt: number | null;
   activeJob: JobSnapshot | null;
+  settings: CleanupSettings;
   preferences: AccountPreferences;
+  schedule: AccountSchedule | null;
+  requiresReconnect: boolean;
+  lastScheduledRun: ScheduledRunSummary | null;
 };
 
 export type RunStartResponse = {

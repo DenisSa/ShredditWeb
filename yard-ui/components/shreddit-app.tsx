@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   type ReactNode,
   useCallback,
@@ -23,6 +24,7 @@ import {
   formatAgeInDays,
   formatExpiry,
   formatTimestamp,
+  getBrowserTimezone,
   getItemSummary,
   logoutRedditSession,
   requestPreview,
@@ -30,7 +32,6 @@ import {
   startRun,
   subscribeToRunEvents,
   toUserMessage,
-  updateDeletionHistoryPreference,
   validateScopes,
 } from "@/lib/shreddit";
 
@@ -55,9 +56,17 @@ const DEFAULT_SESSION_SUMMARY: SessionSummary = {
   scope: [],
   expiresAt: null,
   activeJob: null,
+  settings: {
+    minAgeDays: 7,
+    maxScore: 100,
+    storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
+  },
   preferences: {
     storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
   },
+  schedule: null,
+  requiresReconnect: false,
+  lastScheduledRun: null,
 };
 
 function surfaceClassName(extra = "") {
@@ -70,6 +79,14 @@ function subtlePanelClassName(extra = "") {
 
 function sectionLabelClassName() {
   return "text-xs font-medium uppercase tracking-[0.18em] text-[color:var(--page-muted)]";
+}
+
+function previewMatchesRules(preview: PreviewResult | null, rules: { minAgeDays: number; maxScore: number }) {
+  return Boolean(
+    preview &&
+      preview.rules.minAgeDays === rules.minAgeDays &&
+      preview.rules.maxScore === rules.maxScore,
+  );
 }
 
 function Notice({
@@ -500,7 +517,6 @@ export function ShredditApp() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
-  const [isSavingHistoryPreference, setIsSavingHistoryPreference] = useState(false);
   const [dryRun, setDryRun] = useState(true);
   const [confirmChecked, setConfirmChecked] = useState(false);
   const [previewFilter, setPreviewFilter] = useState<PreviewFilter>("eligible");
@@ -514,7 +530,8 @@ export function ShredditApp() {
   const runReport = jobSnapshot?.report ?? null;
   const isRunning = jobSnapshot?.status === "running";
   const activeRunDryRun = isRunning ? jobSnapshot?.dryRun ?? dryRun : dryRun;
-  const storeDeletionHistory = sessionSummary.preferences.storeDeletionHistory;
+  const timezone = hasMounted ? getBrowserTimezone() : "UTC";
+  const previewIsCurrent = previewMatchesRules(preview, sessionSummary.settings);
 
   const progressPercent = useMemo(() => {
     if (!runProgress) {
@@ -571,6 +588,14 @@ export function ShredditApp() {
       });
     }
 
+    if (preview && !previewIsCurrent) {
+      messages.push({
+        key: "preview-stale",
+        tone: "warning",
+        content: "Preview results are out of date for the current cleanup settings. Scan again before running or enabling automation.",
+      });
+    }
+
     if (sessionWarnings.length > 0) {
       messages.push({
         key: "scope-warning",
@@ -585,8 +610,25 @@ export function ShredditApp() {
       });
     }
 
+    if (sessionSummary.requiresReconnect) {
+      messages.push({
+        key: "reconnect-required",
+        tone: "warning",
+        content: "Stored Reddit automation needs a fresh sign-in before scheduled cleanup can be enabled again.",
+      });
+    }
+
     return messages;
-  }, [authError, notice, runtimeConfig.authConfigured, runtimeConfig.configurationError, sessionWarnings]);
+  }, [
+    authError,
+    notice,
+    preview,
+    previewIsCurrent,
+    runtimeConfig.authConfigured,
+    runtimeConfig.configurationError,
+    sessionSummary.requiresReconnect,
+    sessionWarnings,
+  ]);
 
   const stepItems = useMemo(
     () => [
@@ -706,16 +748,10 @@ export function ShredditApp() {
           }
         }
 
-        const summary = await fetchSessionSummary();
+        const summary = await refreshSessionSummary();
 
         if (cancelled) {
           return;
-        }
-
-        setSessionSummary(summary);
-        setJobSnapshot(summary.activeJob);
-        if (summary.activeJob) {
-          setDryRun(summary.activeJob.dryRun);
         }
 
         if (summary.activeJob?.jobId) {
@@ -749,7 +785,19 @@ export function ShredditApp() {
       cancelled = true;
       closeRunStream();
     };
-  }, [closeRunStream, connectToJob, hydrateActiveJob]);
+  }, [closeRunStream, connectToJob, hydrateActiveJob, refreshSessionSummary]);
+
+  useEffect(() => {
+    if (!session?.username) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void refreshSessionSummary().catch(() => {});
+    }, 30_000);
+
+    return () => clearInterval(interval);
+  }, [refreshSessionSummary, session?.username]);
 
   function resetWorkflowState() {
     setPreview(null);
@@ -781,8 +829,7 @@ export function ShredditApp() {
 
     try {
       await logoutRedditSession();
-      const summary = await fetchSessionSummary();
-      setSessionSummary(summary);
+      await refreshSessionSummary();
       resetWorkflowState();
       setNotice("Stored Reddit session cleared for this device.");
       setAuthError(null);
@@ -826,53 +873,6 @@ export function ShredditApp() {
       setAuthError(toUserMessage(error));
     } finally {
       setIsPreviewing(false);
-    }
-  }
-
-  async function handleStoreDeletionHistoryChange(nextValue: boolean) {
-    if (!session || isRunning || isSavingHistoryPreference) {
-      return;
-    }
-
-    const previousValue = sessionSummary.preferences.storeDeletionHistory;
-    const username = session.username;
-
-    setAuthError(null);
-    setNotice(null);
-    setIsSavingHistoryPreference(true);
-    setSessionSummary((current) => ({
-      ...current,
-      preferences: {
-        ...current.preferences,
-        storeDeletionHistory: nextValue,
-      },
-    }));
-
-    try {
-      const updated = await updateDeletionHistoryPreference(nextValue);
-      setSessionSummary((current) => ({
-        ...current,
-        preferences: {
-          ...current.preferences,
-          storeDeletionHistory: updated.storeDeletionHistory,
-        },
-      }));
-      setNotice(
-        updated.storeDeletionHistory
-          ? `Deleted history will be stored for u/${username}.`
-          : `Deleted history storage is off for u/${username}.`,
-      );
-    } catch (error) {
-      setSessionSummary((current) => ({
-        ...current,
-        preferences: {
-          ...current.preferences,
-          storeDeletionHistory: previousValue,
-        },
-      }));
-      setAuthError(toUserMessage(error));
-    } finally {
-      setIsSavingHistoryPreference(false);
     }
   }
 
@@ -928,7 +928,14 @@ export function ShredditApp() {
 
   const previewDiscoveredCount = (preview?.counts.commentsDiscovered ?? 0) + (preview?.counts.postsDiscovered ?? 0);
   const previewEligibleCount = preview?.eligibleItems.length ?? 0;
-  const canRun = Boolean(preview && preview.eligibleItems.length > 0 && confirmChecked && !isRunning && !isPreviewing);
+  const canRun = Boolean(
+    preview &&
+      previewIsCurrent &&
+      preview.eligibleItems.length > 0 &&
+      confirmChecked &&
+      !isRunning &&
+      !isPreviewing,
+  );
 
   return (
     <div className="pb-10">
@@ -945,9 +952,17 @@ export function ShredditApp() {
           </div>
         </div>
 
-        <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface)] px-3 py-2 text-sm text-[color:var(--page-muted-strong)]">
-          <span className="h-2.5 w-2.5 rounded-full bg-[color:var(--page-success)]" />
-          <span>{session ? session.username : isBootstrapping ? "Checking session" : "Signed out"}</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface)] px-4 py-2 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)]"
+            href="/settings"
+          >
+            Open settings
+          </Link>
+          <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface)] px-3 py-2 text-sm text-[color:var(--page-muted-strong)]">
+            <span className="h-2.5 w-2.5 rounded-full bg-[color:var(--page-success)]" />
+            <span>{session ? session.username : isBootstrapping ? "Checking session" : "Signed out"}</span>
+          </div>
         </div>
       </header>
 
@@ -980,10 +995,10 @@ export function ShredditApp() {
                     </button>
                     <button
                       className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface-strong)] px-5 py-3 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={!session || isPreviewing || isRunning || isSavingHistoryPreference}
+                      disabled={!session || isPreviewing || isRunning}
                       onClick={handleLogout}
                     >
-                      Clear session
+                      Clear device session
                     </button>
                   </div>
                 </div>
@@ -1021,13 +1036,15 @@ export function ShredditApp() {
                       Scan your history with the current rules and confirm that the eligible set looks right before moving on.
                     </p>
                   </div>
-                  <button
-                    className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-ink)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0d1826] disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={!session || isPreviewing || isRunning}
-                    onClick={handlePreview}
-                  >
-                    {isPreviewing ? "Scanning Reddit history..." : preview ? "Scan again" : "Scan account"}
-                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-ink)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0d1826] disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={!session || isPreviewing || isRunning}
+                      onClick={handlePreview}
+                    >
+                      {isPreviewing ? "Scanning Reddit history..." : preview ? "Scan again" : "Scan account"}
+                    </button>
+                  </div>
                 </div>
 
                 <StatusStack messages={statusMessages} />
@@ -1086,15 +1103,17 @@ export function ShredditApp() {
                       Choose a mode, confirm the active rules, and let the server finish the run even if the page refreshes.
                     </p>
                   </div>
-                  {preview ? (
-                    <button
-                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface-strong)] px-5 py-3 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={isRunning || isPreviewing}
-                      onClick={handlePreview}
-                    >
-                      Refresh preview
-                    </button>
-                  ) : null}
+                  <div className="flex flex-wrap gap-3">
+                    {preview ? (
+                      <button
+                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface-strong)] px-5 py-3 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={isRunning || isPreviewing}
+                        onClick={handlePreview}
+                      >
+                        Refresh preview
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <StatusStack messages={statusMessages} />
@@ -1146,8 +1165,8 @@ export function ShredditApp() {
                           type="checkbox"
                         />
                         <span>
-                          I understand that this run will target content older than {runtimeConfig.minAgeDays} days
-                          with score below {runtimeConfig.maxScore}.
+                          I understand that this run will target content older than {preview?.rules.minAgeDays ?? sessionSummary.settings.minAgeDays} days
+                          with score below {preview?.rules.maxScore ?? sessionSummary.settings.maxScore}.
                         </span>
                       </label>
                     </div>
@@ -1263,31 +1282,41 @@ export function ShredditApp() {
         </div>
 
         <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
-          <SummaryCard title="Current rules">
+          <SummaryCard title="Saved rules">
             <div className="divide-y divide-[color:var(--page-border)]">
               <SummaryRow
-                hint="Only content older than this threshold is eligible."
+                hint="Items must be older than this age to be eligible."
                 label="Minimum age"
-                value={`${runtimeConfig.minAgeDays} days`}
+                value={`${sessionSummary.settings.minAgeDays} days`}
               />
               <SummaryRow
-                hint="Only content below this score threshold is eligible."
+                hint="Items at or above this score stay untouched."
                 label="Maximum score"
-                value={`< ${runtimeConfig.maxScore}`}
+                value={sessionSummary.settings.maxScore}
               />
-              <SummaryRow label="Run mode" value={activeRunDryRun ? "Dry run" : "Live deletion"} />
+              <SummaryRow
+                hint="Live deletions can optionally keep original content in SQLite."
+                label="Deleted history"
+                value={sessionSummary.settings.storeDeletionHistory ? "Stored" : "Not stored"}
+              />
             </div>
+
+            <p className="mt-4 text-sm leading-6 text-[color:var(--page-muted)]">
+              {previewIsCurrent
+                ? "The current preview matches the saved rules."
+                : "The current preview is out of date for the saved rules."}
+            </p>
           </SummaryCard>
 
           <SummaryCard title="Session">
             <div className="divide-y divide-[color:var(--page-border)]">
               <SummaryRow
-                hint={session ? "Current Reddit account for this stored local session." : "Sign in to start scanning your history."}
+                hint={session ? "Current Reddit account for this device-local session." : "Sign in to start scanning your history."}
                 label="Account"
                 value={session?.username || "Signed out"}
               />
               <SummaryRow
-                hint="Reddit access token status for the active session."
+                hint="Reddit access token status for the active browser session."
                 label="Token"
                 value={session ? formatExpiry(session.expiresAt) : "Not connected"}
               />
@@ -1296,45 +1325,12 @@ export function ShredditApp() {
                 label="Scopes"
                 value={sessionWarnings.length > 0 ? "Missing scopes" : session ? "Ready" : "Waiting"}
               />
+              <SummaryRow
+                hint="Scheduler executes in UTC, but the UI renders times in your browser timezone."
+                label="Timezone"
+                value={timezone}
+              />
             </div>
-
-            {session ? (
-              <div className={subtlePanelClassName("mt-4 px-4 py-4")}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-[color:var(--page-ink)]">Store deleted history</p>
-                    <p className="mt-1 text-sm leading-6 text-[color:var(--page-muted)]">
-                      Saved per Reddit account. When enabled, live deletions write original content and metadata to SQLite.
-                    </p>
-                    <p className="mt-2 text-xs uppercase tracking-[0.16em] text-[color:var(--page-muted)]">
-                      {isSavingHistoryPreference
-                        ? "Saving"
-                        : storeDeletionHistory
-                          ? "Enabled for future live deletions"
-                          : "Disabled for future live deletions"}
-                    </p>
-                  </div>
-
-                  <button
-                    aria-checked={storeDeletionHistory}
-                    className={`relative inline-flex h-7 w-12 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                      storeDeletionHistory ? "bg-[color:var(--page-accent)]" : "bg-[rgba(91,103,118,0.22)]"
-                    }`}
-                    disabled={isRunning || isSavingHistoryPreference}
-                    onClick={() => void handleStoreDeletionHistoryChange(!storeDeletionHistory)}
-                    role="switch"
-                    type="button"
-                  >
-                    <span className="sr-only">Store deleted history for this Reddit account</span>
-                    <span
-                      className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-[0_6px_16px_rgba(15,23,42,0.18)] transition ${
-                        storeDeletionHistory ? "left-6" : "left-1"
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            ) : null}
 
             <div className="mt-4 flex flex-wrap gap-3">
               {!session ? (
@@ -1348,12 +1344,49 @@ export function ShredditApp() {
               ) : (
                 <button
                   className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface-strong)] px-4 py-2 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={isPreviewing || isRunning || isSavingHistoryPreference}
+                  disabled={isPreviewing || isRunning}
                   onClick={handleLogout}
                 >
-                  Clear session
+                  Clear device session
                 </button>
               )}
+            </div>
+          </SummaryCard>
+
+          <SummaryCard title="Automation">
+            <div className="divide-y divide-[color:var(--page-border)]">
+              <SummaryRow
+                hint="Scheduled cleanup uses your saved rules from the settings page."
+                label="Status"
+                value={sessionSummary.schedule?.enabled ? "Enabled" : "Disabled"}
+              />
+              <SummaryRow
+                hint="Preset cadence stored in UTC and shown here in browser time."
+                label="Cadence"
+                value={sessionSummary.schedule ? sessionSummary.schedule.cadence : "Not configured"}
+              />
+              <SummaryRow
+                hint={`Rendered in ${timezone}.`}
+                label="Next run"
+                value={
+                  sessionSummary.schedule?.enabled && sessionSummary.schedule.nextRunAt
+                    ? formatTimestamp(sessionSummary.schedule.nextRunAt)
+                    : "Disabled"
+                }
+              />
+              <SummaryRow
+                hint={sessionSummary.lastScheduledRun?.message || "Most recent scheduled attempt for this Reddit account."}
+                label="Last scheduled run"
+                value={sessionSummary.lastScheduledRun ? sessionSummary.lastScheduledRun.status : "None yet"}
+              />
+            </div>
+
+            <div className={subtlePanelClassName("mt-4 px-4 py-4 text-sm leading-6 text-[color:var(--page-muted)]")}>
+              {sessionSummary.requiresReconnect
+                ? "Automation is paused until you reconnect Reddit from the settings page."
+                : sessionSummary.schedule?.enabled
+                  ? "Automation is live and waiting for its next scheduled run."
+                  : "Automation is off."}
             </div>
           </SummaryCard>
 

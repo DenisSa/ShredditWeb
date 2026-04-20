@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { listDeletedItemsForUsername } from "@/lib/server/shreddit-db";
+import { listScheduledRunsForUsername } from "@/lib/server/shreddit-db";
 import { jsonNoStore } from "@/lib/server/shreddit-responses";
 import { getSessionFromRequest } from "@/lib/server/shreddit-store";
 
@@ -9,10 +9,10 @@ function parseLimit(value: string | null) {
   const parsed = Number(value);
 
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 100;
+    return 20;
   }
 
-  return Math.min(500, Math.floor(parsed));
+  return Math.min(100, Math.floor(parsed));
 }
 
 export async function GET(request: NextRequest) {
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   if (!session?.reddit) {
     return jsonNoStore(
       {
-        error: "Sign in with Reddit before reading deleted item history.",
+        error: "Sign in with Reddit before reading scheduled history.",
       },
       { status: 401 },
     );
@@ -30,6 +30,6 @@ export async function GET(request: NextRequest) {
   const limit = parseLimit(request.nextUrl.searchParams.get("limit"));
 
   return jsonNoStore({
-    items: listDeletedItemsForUsername(session.reddit.username, limit),
+    items: listScheduledRunsForUsername(session.reddit.username, limit),
   });
 }

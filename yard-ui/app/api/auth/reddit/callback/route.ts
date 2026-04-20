@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   exchangeAuthorizationCode,
+  initializeAuthenticatedAccount,
   toUserMessage,
 } from "@/lib/server/shreddit-core";
 import { redirectHomeWithAuthError } from "@/lib/server/shreddit-responses";
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const redditGrant = await exchangeAuthorizationCode(code);
+    initializeAuthenticatedAccount(redditGrant);
     updateSession(session, {
       oauthState: null,
       reddit: redditGrant,

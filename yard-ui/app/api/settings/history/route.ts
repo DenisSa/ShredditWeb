@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { setStoreDeletionHistoryPreference } from "@/lib/server/shreddit-db";
+import { getDefaultCleanupSettings } from "@/lib/server/shreddit-core";
 import { jsonError, jsonNoStore } from "@/lib/server/shreddit-responses";
 import { getSessionFromRequest } from "@/lib/server/shreddit-store";
 
@@ -36,6 +37,7 @@ export async function POST(request: NextRequest) {
     const preference = setStoreDeletionHistoryPreference(
       session.reddit.username,
       body.storeDeletionHistory,
+      getDefaultCleanupSettings(),
     );
 
     return jsonNoStore({

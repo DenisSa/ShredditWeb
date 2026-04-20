@@ -5,6 +5,7 @@ import {
   RedditAuthError,
   RedditConnectivityError,
   RedditRequestError,
+  RunConflictError,
   toUserMessage,
 } from "@/lib/server/shreddit-core";
 
@@ -29,6 +30,10 @@ function getErrorStatus(error: unknown) {
 
   if (error instanceof RedditRequestError) {
     return error.status;
+  }
+
+  if (error instanceof RunConflictError) {
+    return 409;
   }
 
   return 500;

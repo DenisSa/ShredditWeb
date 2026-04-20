@@ -13,6 +13,7 @@ import {
   PersistedSessionRecord,
   upsertPersistedSession,
 } from "@/lib/server/shreddit-db";
+import { releaseAccountRun } from "@/lib/server/shreddit-run-coordinator";
 
 const SESSION_COOKIE_NAME = "shreddit.sid";
 const SESSION_MAX_AGE_DAYS = 30;
@@ -43,6 +44,7 @@ type JobListener = (event: "progress" | "complete" | "error", snapshot: JobSnaps
 export type ServerJobRecord = {
   jobId: string;
   sessionId: string;
+  username: string;
   dryRun: boolean;
   status: JobSnapshot["status"];
   progress: RunProgress | null;
@@ -54,7 +56,7 @@ export type ServerJobRecord = {
 type ShredditStore = {
   previews: Map<string, PreviewResult>;
   jobs: Map<string, ServerJobRecord>;
-  cleanupStarted: boolean;
+  maintenanceStarted: boolean;
 };
 
 type GlobalWithStore = typeof globalThis & {
@@ -68,32 +70,36 @@ function getStore() {
     globalWithStore.__shredditStore = {
       previews: new Map<string, PreviewResult>(),
       jobs: new Map<string, ServerJobRecord>(),
-      cleanupStarted: false,
+      maintenanceStarted: false,
     };
   }
 
-  const store = globalWithStore.__shredditStore;
+  return globalWithStore.__shredditStore;
+}
 
-  if (!store.cleanupStarted) {
-    store.cleanupStarted = true;
+export function startStoreMaintenance() {
+  const store = getStore();
 
-    setInterval(() => {
-      const now = Date.now();
-      const expiredSessionIds = deleteExpiredPersistedSessions(now - getSessionMaxAgeMs());
-
-      for (const sessionId of expiredSessionIds) {
-        store.previews.delete(sessionId);
-      }
-
-      for (const [jobId, job] of store.jobs.entries()) {
-        if (job.status !== "running" && now - job.updatedAt > FINISHED_JOB_TTL_MS) {
-          store.jobs.delete(jobId);
-        }
-      }
-    }, 60_000).unref?.();
+  if (store.maintenanceStarted) {
+    return;
   }
 
-  return store;
+  store.maintenanceStarted = true;
+
+  setInterval(() => {
+    const now = Date.now();
+    const expiredSessionIds = deleteExpiredPersistedSessions(now - getSessionMaxAgeMs());
+
+    for (const sessionId of expiredSessionIds) {
+      store.previews.delete(sessionId);
+    }
+
+    for (const [jobId, job] of store.jobs.entries()) {
+      if (job.status !== "running" && now - job.updatedAt > FINISHED_JOB_TTL_MS) {
+        store.jobs.delete(jobId);
+      }
+    }
+  }, 60_000).unref?.();
 }
 
 function getSessionSecret() {
@@ -228,6 +234,8 @@ export function clearSessionCookie(response: NextResponse) {
 }
 
 export function getSessionFromRequest(request: NextRequest) {
+  startStoreMaintenance();
+
   const secret = getSessionSecret();
 
   if (!secret) {
@@ -314,11 +322,12 @@ export function serializeJob(job: ServerJobRecord): JobSnapshot {
   };
 }
 
-export function createJob(session: ServerSessionRecord, dryRun: boolean) {
+export function createJob(session: ServerSessionRecord, username: string, dryRun: boolean) {
   const now = Date.now();
   const job: ServerJobRecord = {
     jobId: randomUUID(),
     sessionId: session.id,
+    username,
     dryRun,
     status: "running",
     progress: null,
@@ -369,5 +378,6 @@ export function finalizeJob(job: ServerJobRecord, report: RunReport) {
   job.report = report;
   job.status = report.status;
   job.updatedAt = Date.now();
+  releaseAccountRun(job.username);
   publishJobEvent(job, report.status === "completed" ? "complete" : "error");
 }
