@@ -8,6 +8,7 @@ import {
   RunConflictError,
   toUserMessage,
 } from "@/lib/server/shreddit-core";
+import { buildHomeUrl } from "@/lib/server/shreddit-urls";
 
 export function jsonNoStore(data: unknown, init?: ResponseInit) {
   return NextResponse.json(data, {
@@ -51,9 +52,7 @@ export function jsonError(error: unknown) {
 }
 
 export function redirectHomeWithAuthError(request: NextRequest, message: string) {
-  const url = request.nextUrl.clone();
-  url.pathname = "/";
-  url.search = "";
+  const url = buildHomeUrl(request.url);
   url.searchParams.set("authError", message);
   return NextResponse.redirect(url);
 }

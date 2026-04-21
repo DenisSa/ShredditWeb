@@ -10,6 +10,7 @@ import {
   setSessionCookie,
   updateSession,
 } from "@/lib/server/shreddit-store";
+import { buildHomeUrl } from "@/lib/server/shreddit-urls";
 
 export const runtime = "nodejs";
 
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest) {
       preview: null,
     });
 
-    const response = NextResponse.redirect(new URL("/", request.url));
+    const response = NextResponse.redirect(buildHomeUrl(request.url));
     setSessionCookie(response, session.id);
     return response;
   } catch (callbackError) {
