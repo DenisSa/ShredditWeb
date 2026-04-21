@@ -106,24 +106,75 @@ The repo now includes two files for a GHCR-backed deployment flow:
 - `docker-compose.production.yml`: runs the prebuilt container image and persists SQLite data in the `shreddit-data` Docker volume.
 - `.env.production.example`: template for the image reference, Reddit OAuth config, and production bind settings.
 
-To prepare the Pi:
+### Validated Pi + Tailscale setup
 
-1. Copy `.env.production.example` to `.env.production`.
-2. Set `SHREDDIT_IMAGE` to the image published by this repo, for example `ghcr.io/your-github-user/shredditweb:latest`.
-3. Set `REDDIT_REDIRECT_URI` to the exact public callback URL you will expose.
-4. If the package is private, log in once with a GitHub personal access token (classic) that has `read:packages`.
+The steps below were validated on a fresh Raspberry Pi Debian 13 (`trixie`) image with Tailscale enabled and the app exposed privately at `https://your-host.your-tailnet.ts.net`.
+
+1. Install Docker Engine and the Compose plugin from Docker's official Debian repository.
+2. Keep Docker administration under `sudo`; do not add the deployment user to the `docker` group.
+3. Create `/opt/shredditweb` on the Pi and copy in:
+   - `docker-compose.production.yml`
+   - `.env.production`
+4. Set `.env.production` to values like:
 
 ```bash
-echo "$GHCR_READ_PACKAGES_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-docker compose --env-file .env.production -f docker-compose.production.yml pull
-docker compose --env-file .env.production -f docker-compose.production.yml up -d
+SHREDDIT_IMAGE=ghcr.io/denissa/shredditweb:latest
+SHREDDIT_BIND=127.0.0.1
+SHREDDIT_PORT=3000
+REDDIT_CLIENT_ID=your_reddit_web_app_client_id
+REDDIT_CLIENT_SECRET=your_reddit_web_app_client_secret
+REDDIT_REDIRECT_URI=https://your-host.your-tailnet.ts.net/api/auth/reddit/callback
+SESSION_SECRET=replace_with_a_long_random_secret
+NEXT_PUBLIC_MIN_AGE_DAYS=7
+NEXT_PUBLIC_MAX_SCORE=100
+SESSION_MAX_AGE_DAYS=30
+SCHEDULER_POLL_INTERVAL_MS=60000
 ```
+
+5. Log in to GHCR on the Pi with a GitHub personal access token (classic) that has `read:packages`.
+6. Pull and start the app with:
+
+```bash
+sudo docker compose --env-file /opt/shredditweb/.env.production -f /opt/shredditweb/docker-compose.production.yml pull
+sudo docker compose --env-file /opt/shredditweb/.env.production -f /opt/shredditweb/docker-compose.production.yml up -d
+```
+
+7. Publish the app privately over Tailscale HTTPS:
+
+```bash
+sudo tailscale serve --yes --bg 127.0.0.1:3000
+```
+
+8. Verify the service:
+   - `sudo docker compose --env-file /opt/shredditweb/.env.production -f /opt/shredditweb/docker-compose.production.yml ps`
+   - `curl -I http://127.0.0.1:3000`
+   - open `https://your-host.your-tailnet.ts.net` from a Tailscale-connected client
+
+Recommended host hardening for SD-backed storage:
+
+- keep the app bound to `127.0.0.1`
+- use Docker log rotation to limit write amplification:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+
+- store that in `/etc/docker/daemon.json` and restart Docker afterward
+- keep the default named volume for SQLite persistence so `/data/shreddit.sqlite` survives container recreation and host reboots
 
 The publish workflow at `.github/workflows/publish-image.yml` builds and pushes a `linux/arm64` image to GHCR on pushes to `main`. It publishes a rolling `latest` tag plus a `sha-<commit>` tag so you can pin a specific release if you want to roll back.
 
 ## Pi Update Options
 
 The simplest low-maintenance updater is a small `systemd` timer on the Pi that runs `docker compose pull` and `docker compose up -d` on a schedule. This keeps the deployment model one-way: GitHub publishes the image, the Pi only refreshes it.
+
+The validated setup on the Pi uses `latest` in `/opt/shredditweb/.env.production` together with this timer so the host checks once per day and recreates the container only when a newer image is available.
 
 Example service unit:
 
@@ -155,7 +206,27 @@ Unit=shredditweb-refresh.service
 WantedBy=timers.target
 ```
 
-If you prefer push-based deployment instead, the other common pattern is an SSH step in GitHub Actions that connects to the Pi after a successful image publish and runs the same two commands remotely. That gives you immediate deploys, but it also means storing SSH credentials in GitHub and letting GitHub reach your Pi over the network.
+Validated daily timer:
+
+```ini
+[Unit]
+Description=Check for new ShredditWeb images daily
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=shredditweb-refresh.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Manual trigger:
+
+```bash
+sudo systemctl start shredditweb-refresh.service
+```
 
 ## HTTPS and Reverse Proxy
 
@@ -165,32 +236,15 @@ For production Reddit OAuth, the external callback URL must exactly match both t
 https://cleanup.example.com/api/auth/reddit/callback
 ```
 
-When a reverse proxy runs on the same Pi, keep `SHREDDIT_BIND=127.0.0.1` so the app container only listens locally and let the proxy terminate TLS.
-
-Caddy is the lowest-maintenance option because it handles Let's Encrypt for you automatically:
-
-```caddyfile
-cleanup.example.com {
-  reverse_proxy 127.0.0.1:3000
-}
-```
-
-If you prefer Nginx, use a server block that forwards the original host and HTTPS information:
-
-```nginx
-server {
-  server_name cleanup.example.com;
-
-  location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
-  }
-}
-```
-
 If you later add automatic deployments, it is safest to avoid deploying during an active cleanup run because active jobs live in memory and a container restart will interrupt them.
+
+For a private Tailscale-only deployment, you can skip Caddy or Nginx entirely and use:
+
+```bash
+sudo tailscale serve --yes --bg 127.0.0.1:3000
+```
+
+That keeps the Next.js container private to the tailnet while still giving you an HTTPS callback URL for Reddit OAuth.
 
 ## Project layout
 
