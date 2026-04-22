@@ -9,6 +9,7 @@ import {
   RunReport,
   ScheduledRunSummary,
   SessionSummary,
+  SystemStatus,
   ThemePreference,
   JobSnapshot,
 } from "@/lib/shreddit-types";
@@ -25,6 +26,7 @@ export type {
   ScheduledRunSummary,
   SessionSummary,
   LastRunSummary,
+  SystemStatus,
   ThemePreference,
 } from "@/lib/shreddit-types";
 export { DEFAULT_STORE_DELETION_HISTORY } from "@/lib/shreddit-types";
@@ -78,6 +80,10 @@ async function fetchJson<T>(input: string, init?: RequestInit) {
 
 export async function fetchSessionSummary() {
   return fetchJson<SessionSummary>("/api/session");
+}
+
+export async function fetchSystemStatus() {
+  return fetchJson<SystemStatus>("/api/system/status");
 }
 
 export async function saveAccountSettings(input: {

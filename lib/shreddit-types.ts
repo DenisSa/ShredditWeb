@@ -155,6 +155,32 @@ export type DeletedItemSnippet = {
   permalink: string;
 };
 
+export type SystemTemperatureSource = "vcgencmd" | "sysfs";
+
+export type SystemTemperature = {
+  celsius: number | null;
+  source: SystemTemperatureSource | null;
+};
+
+export type SystemCpu = {
+  usagePercent: number | null;
+};
+
+export type SystemMemory = {
+  totalBytes: number | null;
+  usedBytes: number | null;
+  availableBytes: number | null;
+  usagePercent: number | null;
+};
+
+export type SystemStatus = {
+  updatedAt: number;
+  temperature: SystemTemperature;
+  cpu: SystemCpu;
+  memory: SystemMemory;
+  unavailableReason: string | null;
+};
+
 export type SessionSummary = {
   authConfigured: boolean;
   configurationError: string | null;

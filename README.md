@@ -74,7 +74,7 @@ docker compose --env-file .env.production -f docker-compose.production.yml pull
 docker compose --env-file .env.production -f docker-compose.production.yml up -d
 ```
 
-`docker-compose.production.yml` mounts a named Docker volume at `/data` and pins SQLite to `/data/shreddit.sqlite`, so sessions, schedules, and deleted-history records survive container restarts and image updates.
+`docker-compose.production.yml` mounts a named Docker volume at `/data` and pins SQLite to `/data/shreddit.sqlite`, so sessions, schedules, and deleted-history records survive container restarts and image updates. It also bind-mounts host CPU, memory, and thermal files into `/host/*` so the home page can show Raspberry Pi health in the sidebar.
 
 ## Production Build
 
@@ -138,6 +138,8 @@ SCHEDULER_POLL_INTERVAL_MS=60000
 sudo docker compose --env-file /opt/shredditweb/.env.production -f /opt/shredditweb/docker-compose.production.yml pull
 sudo docker compose --env-file /opt/shredditweb/.env.production -f /opt/shredditweb/docker-compose.production.yml up -d
 ```
+
+The home page device panel prefers Raspberry Pi's `vcgencmd measure_temp` when that command is available to the app runtime, and otherwise falls back to the Linux thermal sysfs reading. The stock Docker deployment uses the sysfs fallback by default while still showing host CPU and RAM through the bind mounts above.
 
 7. Publish the app privately over Tailscale HTTPS:
 

@@ -13,10 +13,25 @@ services:
       NEXT_PUBLIC_MAX_SCORE: ${NEXT_PUBLIC_MAX_SCORE:-100}
       SESSION_MAX_AGE_DAYS: ${SESSION_MAX_AGE_DAYS:-30}
       SCHEDULER_POLL_INTERVAL_MS: ${SCHEDULER_POLL_INTERVAL_MS:-60000}
+      SHREDDIT_SYSTEM_PROC_STAT_PATH: /host/proc/stat
+      SHREDDIT_SYSTEM_MEMINFO_PATH: /host/proc/meminfo
+      SHREDDIT_SYSTEM_THERMAL_ZONE_PATH: /host/sys/class/thermal/thermal_zone0/temp
     ports:
       - "${SHREDDIT_BIND:-0.0.0.0}:${SHREDDIT_PORT:-3000}:3000"
     volumes:
       - shreddit-data:/data
+      - type: bind
+        source: /proc/stat
+        target: /host/proc/stat
+        read_only: true
+      - type: bind
+        source: /proc/meminfo
+        target: /host/proc/meminfo
+        read_only: true
+      - type: bind
+        source: /sys/class/thermal/thermal_zone0/temp
+        target: /host/sys/class/thermal/thermal_zone0/temp
+        read_only: true
     restart: unless-stopped
 
 volumes:

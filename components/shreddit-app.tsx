@@ -18,7 +18,9 @@ import {
   type PreviewResult,
   type RunReport,
   type SessionSummary,
+  type SystemStatus,
   createReportDownload,
+  fetchSystemStatus,
   fetchRunStatus,
   fetchSessionSummary,
   formatAgeInDays,
@@ -195,6 +197,36 @@ function SummaryCard({
   );
 }
 
+function formatPercentValue(value: number | null) {
+  if (value === null) {
+    return "Unavailable";
+  }
+
+  return `${Math.round(value)}%`;
+}
+
+function formatTemperatureValue(value: number | null) {
+  if (value === null) {
+    return "Unavailable";
+  }
+
+  return `${value.toFixed(1)}°C`;
+}
+
+function formatMemoryAmount(value: number | null) {
+  if (value === null) {
+    return "Unavailable";
+  }
+
+  const mebibytes = value / (1024 * 1024);
+
+  if (mebibytes >= 1024) {
+    return `${(mebibytes / 1024).toFixed(1)} GB`;
+  }
+
+  return `${Math.round(mebibytes)} MB`;
+}
+
 function SummaryRow({
   label,
   value,
@@ -212,6 +244,86 @@ function SummaryRow({
       </div>
       <div className="shrink-0 text-right text-sm font-semibold text-[color:var(--page-ink)]">{value}</div>
     </div>
+  );
+}
+
+function DeviceStatusCard({
+  status,
+  showLocalTime,
+}: {
+  status: SystemStatus;
+  showLocalTime: boolean;
+}) {
+  const updatedLabel = showLocalTime ? formatTimestamp(status.updatedAt) : "recently";
+  const temperatureHint =
+    status.temperature.source === "vcgencmd"
+      ? "Firmware-backed Raspberry Pi reading."
+      : status.temperature.source === "sysfs"
+        ? "Linux thermal sensor fallback."
+        : "Temperature is unavailable right now.";
+  const memoryHint =
+    status.memory.usedBytes !== null && status.memory.totalBytes !== null
+      ? `${formatMemoryAmount(status.memory.usedBytes)} used of ${formatMemoryAmount(status.memory.totalBytes)}`
+      : "Memory totals are unavailable right now.";
+
+  return (
+    <SummaryCard title="Device">
+      <div className="space-y-3">
+        <div className={subtlePanelClassName("px-4 py-4")}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className={sectionLabelClassName()}>Temperature</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">
+                {formatTemperatureValue(status.temperature.celsius)}
+              </p>
+            </div>
+            {status.temperature.source ? (
+              <span className="rounded-full bg-[rgba(91,103,118,0.12)] px-2.5 py-1 text-xs font-medium text-[color:var(--page-muted-strong)]">
+                {status.temperature.source === "vcgencmd" ? "Firmware" : "Fallback"}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[color:var(--page-muted)]">{temperatureHint}</p>
+        </div>
+
+        <div className={subtlePanelClassName("px-4 py-4")}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className={sectionLabelClassName()}>CPU</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">
+                {formatPercentValue(status.cpu.usagePercent)}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3">
+            <ProgressMeter value={Math.round(status.cpu.usagePercent ?? 0)} />
+          </div>
+        </div>
+
+        <div className={subtlePanelClassName("px-4 py-4")}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className={sectionLabelClassName()}>RAM</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">
+                {formatPercentValue(status.memory.usagePercent)}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3">
+            <ProgressMeter value={Math.round(status.memory.usagePercent ?? 0)} />
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[color:var(--page-muted)]">{memoryHint}</p>
+        </div>
+
+        <p className="text-sm leading-6 text-[color:var(--page-muted)]">Updated {updatedLabel}.</p>
+
+        {status.unavailableReason ? (
+          <div className={subtlePanelClassName("px-4 py-4 text-sm leading-6 text-[color:var(--page-muted)]")}>
+            {status.unavailableReason}
+          </div>
+        ) : null}
+      </div>
+    </SummaryCard>
   );
 }
 
@@ -534,11 +646,14 @@ function subscribeToMountState() {
 
 export function ShredditApp({
   initialSessionSummary,
+  initialSystemStatus,
 }: {
   initialSessionSummary: SessionSummary;
+  initialSystemStatus: SystemStatus;
 }) {
   const hasMounted = useSyncExternalStore(subscribeToMountState, () => true, () => false);
   const [sessionSummary, setSessionSummary] = useState<SessionSummary>(initialSessionSummary);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>(initialSystemStatus);
   const [jobSnapshot, setJobSnapshot] = useState<JobSnapshot | null>(initialSessionSummary.activeJob);
   const [isBootstrapping, setIsBootstrapping] = useState(Boolean(initialSessionSummary.activeJob?.jobId));
   const [authError, setAuthError] = useState<string | null>(null);
@@ -716,6 +831,12 @@ export function ShredditApp({
     return summary;
   }, []);
 
+  const refreshSystemStatus = useCallback(async () => {
+    const status = await fetchSystemStatus();
+    setSystemStatus(status);
+    return status;
+  }, []);
+
   const connectToJob = useCallback(
     (jobId: string) => {
       closeRunStream();
@@ -822,6 +943,19 @@ export function ShredditApp({
 
     return () => clearInterval(interval);
   }, [refreshSessionSummary, session?.username]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void refreshSystemStatus().catch((error) => {
+        setSystemStatus((current) => ({
+          ...current,
+          unavailableReason: `Unable to refresh device metrics. ${toUserMessage(error)}`,
+        }));
+      });
+    }, 15_000);
+
+    return () => clearInterval(interval);
+  }, [refreshSystemStatus]);
 
   function resetWorkflowState() {
     setPreview(null);
@@ -1351,6 +1485,8 @@ export function ShredditApp({
         </div>
 
         <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
+          <DeviceStatusCard showLocalTime={hasMounted} status={systemStatus} />
+
           <SummaryCard title="Session">
             <div className="divide-y divide-[color:var(--page-border)]">
               <SummaryRow
