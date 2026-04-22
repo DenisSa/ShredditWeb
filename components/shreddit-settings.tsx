@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Logo } from "@/components/icons";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   type AccountSchedule,
   DEFAULT_STORE_DELETION_HISTORY,
@@ -77,10 +78,13 @@ const DEFAULT_SESSION_SUMMARY: SessionSummary = {
   },
   preferences: {
     storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
+    theme: "dark",
   },
   schedule: null,
   requiresReconnect: false,
   lastScheduledRun: null,
+  lastRun: null,
+  lastRunDeletedSnippets: [],
 };
 
 const WEEKDAY_OPTIONS: Array<{ value: WeekdayValue; label: string }> = [
@@ -94,7 +98,7 @@ const WEEKDAY_OPTIONS: Array<{ value: WeekdayValue; label: string }> = [
 ];
 
 function surfaceClassName(extra = "") {
-  return `rounded-[24px] border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_20px_48px_rgba(15,23,42,0.06)] ${extra}`.trim();
+  return `rounded-[24px] border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_20px_48px_var(--page-shadow)] ${extra}`.trim();
 }
 
 function subtlePanelClassName(extra = "") {
@@ -521,7 +525,7 @@ export function ShredditSettings() {
     <div className="pb-10">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_10px_30px_var(--page-shadow-soft)]">
             <Logo className="text-[color:var(--page-accent)]" size={22} />
           </div>
           <div>
@@ -533,6 +537,20 @@ export function ShredditSettings() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <ThemeToggle
+            authenticated={Boolean(session)}
+            onError={setAuthError}
+            onSaved={(theme) => {
+              setSessionSummary((current) => ({
+                ...current,
+                preferences: {
+                  ...current.preferences,
+                  theme,
+                },
+              }));
+            }}
+            preferredTheme={sessionSummary.preferences.theme}
+          />
           <Link
             className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface)] px-4 py-2 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)]"
             href="/"

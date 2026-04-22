@@ -63,12 +63,14 @@ function createDependencies(overrides: Partial<SchedulerDependencies> = {}): any
       },
     })),
     runShred: vi.fn(async (_context: unknown, preview: PreviewResult, settings: CleanupSettings) => ({
+      runId: "scheduled-run-1",
       status: "completed",
       stopReasonCode: undefined,
       stopReason: undefined,
       startedAt: Date.parse("2026-04-19T08:16:00Z"),
       finishedAt: Date.parse("2026-04-19T08:20:00Z"),
       dryRun: false,
+      storedDeletionHistory: settings.storeDeletionHistory,
       username: "alice",
       rules: preview.rules,
       totals: {

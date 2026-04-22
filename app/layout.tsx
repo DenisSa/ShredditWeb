@@ -1,7 +1,9 @@
 import "@/styles/globals.css";
 import { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import { Providers } from "./providers";
 import { fontMono, fontSans } from "@/config/fonts";
+import { normalizeThemePreference, THEME_COOKIE_NAME } from "@/lib/server/shreddit-theme";
 
 export const metadata: Metadata = {
 	title: {
@@ -21,16 +23,27 @@ export const viewport: Viewport = {
 	],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
 	children,
 }: {
 	children: React.ReactNode;
 }) {
+	const cookieStore = await cookies();
+	const defaultTheme = normalizeThemePreference(cookieStore.get(THEME_COOKIE_NAME)?.value);
+
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head />
 			<body className={`${fontSans.variable} ${fontMono.variable} min-h-screen font-sans antialiased`}>
-				<Providers themeProps={{ attribute: "class", defaultTheme: "light" }}>
+				<Providers
+					themeProps={{
+						attribute: "class",
+						defaultTheme,
+						enableSystem: false,
+						themes: ["dark", "light"],
+						storageKey: "shreddit.theme",
+					}}
+				>
 					<div className="relative min-h-screen">
 						<main className="mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
 							{children}

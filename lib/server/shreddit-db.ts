@@ -13,13 +13,17 @@ import {
   AccountSchedule,
   CleanupSettings,
   DEFAULT_STORE_DELETION_HISTORY,
+  DeletedItemSnippet,
+  LastRunSummary,
   PreviewItem,
   RunReport,
   ScheduledRunReasonCode,
   ScheduledRunStatus,
   ScheduledRunSummary,
   ShredRules,
+  ThemePreference,
 } from "@/lib/shreddit-types";
+import { DEFAULT_THEME_PREFERENCE, normalizeThemePreference } from "@/lib/server/shreddit-theme";
 
 export type PersistedRedditGrant = {
   accessToken: string;
@@ -51,6 +55,12 @@ export type PersistedAccountSettings = CleanupSettings & {
   updatedAt: number;
 };
 
+export type PersistedAccountPreferences = {
+  username: string;
+  theme: ThemePreference;
+  updatedAt: number;
+};
+
 export type PersistedAccountSchedule = AccountSchedule & {
   username: string;
   updatedAt: number;
@@ -58,6 +68,7 @@ export type PersistedAccountSchedule = AccountSchedule & {
 
 export type DeletedItemRecord = {
   deletedAt: number;
+  runId: string;
   sessionId: string;
   jobId: string | null;
   username: string;
@@ -69,6 +80,7 @@ export type DeletedItemRecord = {
 export type DeletedItemHistoryEntry = {
   id: number;
   deletedAt: number;
+  runId: string | null;
   sessionId: string;
   jobId: string | null;
   username: string;
@@ -79,12 +91,18 @@ export type DeletedItemHistoryEntry = {
 
 export type ScheduledRunRecord = {
   username: string;
+  runId: string | null;
   status: ScheduledRunStatus;
   startedAt: number;
   finishedAt: number;
   message: string | null;
   reasonCode: ScheduledRunReasonCode | null;
   report: RunReport | null;
+};
+
+export type ManualRunRecord = {
+  username: string;
+  report: RunReport;
 };
 
 type SessionRow = {
@@ -99,6 +117,7 @@ type SessionRow = {
 type LegacyAccountPreferenceRow = {
   username: string;
   store_deletion_history: number;
+  theme?: string | null;
   updated_at: number;
 };
 
@@ -134,12 +153,22 @@ type AccountScheduleRow = {
 type ScheduledRunRow = {
   id: number;
   username: string;
+  run_id: string | null;
   status: ScheduledRunStatus;
   started_at: number;
   finished_at: number;
   message: string | null;
   reason_code: ScheduledRunReasonCode | null;
   report_json: string | null;
+};
+
+type ManualRunRow = {
+  id: number;
+  username: string;
+  run_id: string;
+  started_at: number;
+  finished_at: number;
+  report_json: string;
 };
 
 type GlobalWithDatabase = typeof globalThis & {
@@ -239,6 +268,18 @@ function parseStoredGrant(value: string | null) {
   }
 }
 
+function ensureColumnExists(database: DatabaseSync, tableName: string, columnName: string, definition: string) {
+  const columns = database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+
+  database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
 function ensureSchema(database: DatabaseSync) {
   database.exec(`
     PRAGMA journal_mode = WAL;
@@ -258,6 +299,7 @@ function ensureSchema(database: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS account_preferences (
       username TEXT PRIMARY KEY COLLATE NOCASE,
       store_deletion_history INTEGER NOT NULL DEFAULT 1,
+      theme TEXT NOT NULL DEFAULT 'dark',
       updated_at INTEGER NOT NULL
     );
 
@@ -296,6 +338,7 @@ function ensureSchema(database: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS scheduled_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL COLLATE NOCASE,
+      run_id TEXT,
       status TEXT NOT NULL,
       started_at INTEGER NOT NULL,
       finished_at INTEGER NOT NULL,
@@ -308,9 +351,23 @@ function ensureSchema(database: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS scheduled_runs_username_created_idx
       ON scheduled_runs (username, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS manual_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL COLLATE NOCASE,
+      run_id TEXT NOT NULL UNIQUE,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER NOT NULL,
+      report_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS manual_runs_username_finished_idx
+      ON manual_runs (username, finished_at DESC);
+
     CREATE TABLE IF NOT EXISTS deleted_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       deleted_at INTEGER NOT NULL,
+      run_id TEXT,
       session_id TEXT NOT NULL,
       job_id TEXT,
       username TEXT NOT NULL,
@@ -335,6 +392,15 @@ function ensureSchema(database: DatabaseSync) {
 
     CREATE INDEX IF NOT EXISTS deleted_items_username_idx
       ON deleted_items (username, deleted_at DESC);
+  `);
+
+  ensureColumnExists(database, "account_preferences", "theme", "TEXT NOT NULL DEFAULT 'dark'");
+  ensureColumnExists(database, "scheduled_runs", "run_id", "TEXT");
+  ensureColumnExists(database, "deleted_items", "run_id", "TEXT");
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS deleted_items_run_id_idx
+      ON deleted_items (run_id, deleted_at DESC);
   `);
 }
 
@@ -374,6 +440,14 @@ function mapAccountSettingsRow(row: AccountSettingsRow): PersistedAccountSetting
   };
 }
 
+function mapAccountPreferencesRow(row: LegacyAccountPreferenceRow): PersistedAccountPreferences {
+  return {
+    username: row.username,
+    theme: normalizeThemePreference(row.theme),
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapAccountScheduleRow(row: AccountScheduleRow): PersistedAccountSchedule {
   return {
     username: row.username,
@@ -394,12 +468,20 @@ function mapScheduledRunRow(row: ScheduledRunRow): ScheduledRunSummary {
   return {
     id: row.id,
     username: row.username,
+    runId: row.run_id,
     status: row.status,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     message: row.message,
     reasonCode: row.reason_code,
     report: row.report_json ? (JSON.parse(row.report_json) as RunReport) : null,
+  };
+}
+
+function mapManualRunRow(row: ManualRunRow): LastRunSummary {
+  return {
+    source: "manual",
+    report: JSON.parse(row.report_json) as RunReport,
   };
 }
 
@@ -581,6 +663,45 @@ function loadLegacyAccountPreference(username: string) {
       WHERE username = ?
     `)
     .get(username) as LegacyAccountPreferenceRow | undefined;
+}
+
+export function loadAccountPreferences(username: string) {
+  const row = loadLegacyAccountPreference(username);
+  return row ? mapAccountPreferencesRow(row) : null;
+}
+
+export function ensureAccountPreferences(username: string) {
+  const existing = loadAccountPreferences(username);
+
+  if (existing) {
+    return existing;
+  }
+
+  return upsertAccountThemePreference(username, DEFAULT_THEME_PREFERENCE);
+}
+
+export function upsertAccountThemePreference(username: string, theme: ThemePreference) {
+  const updatedAt = Date.now();
+
+  getDatabase()
+    .prepare(`
+      INSERT INTO account_preferences (
+        username,
+        store_deletion_history,
+        theme,
+        updated_at
+      ) VALUES (?, 1, ?, ?)
+      ON CONFLICT(username) DO UPDATE SET
+        theme = excluded.theme,
+        updated_at = excluded.updated_at
+    `)
+    .run(username, theme, updatedAt);
+
+  return {
+    username,
+    theme,
+    updatedAt,
+  } satisfies PersistedAccountPreferences;
 }
 
 export function loadAccountSettings(username: string) {
@@ -818,6 +939,7 @@ export function insertScheduledRun(record: ScheduledRunRecord) {
     .prepare(`
       INSERT INTO scheduled_runs (
         username,
+        run_id,
         status,
         started_at,
         finished_at,
@@ -825,10 +947,11 @@ export function insertScheduledRun(record: ScheduledRunRecord) {
         reason_code,
         report_json,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       record.username,
+      record.runId,
       record.status,
       record.startedAt,
       record.finishedAt,
@@ -841,12 +964,38 @@ export function insertScheduledRun(record: ScheduledRunRecord) {
   return Number(result.lastInsertRowid);
 }
 
+export function insertManualRun(record: ManualRunRecord) {
+  const createdAt = Date.now();
+  const result = getDatabase()
+    .prepare(`
+      INSERT INTO manual_runs (
+        username,
+        run_id,
+        started_at,
+        finished_at,
+        report_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      record.username,
+      record.report.runId,
+      record.report.startedAt,
+      record.report.finishedAt,
+      JSON.stringify(record.report),
+      createdAt,
+    );
+
+  return Number(result.lastInsertRowid);
+}
+
 export function listScheduledRunsForUsername(username: string, limit = 20) {
   const rows = getDatabase()
     .prepare(`
       SELECT
         id,
         username,
+        run_id,
         status,
         started_at,
         finished_at,
@@ -869,6 +1018,7 @@ export function getLatestScheduledRunForUsername(username: string) {
       SELECT
         id,
         username,
+        run_id,
         status,
         started_at,
         finished_at,
@@ -885,11 +1035,76 @@ export function getLatestScheduledRunForUsername(username: string) {
   return row ? mapScheduledRunRow(row) : null;
 }
 
+export function getLatestExecutedScheduledRunForUsername(username: string) {
+  const row = getDatabase()
+    .prepare(`
+      SELECT
+        id,
+        username,
+        run_id,
+        status,
+        started_at,
+        finished_at,
+        message,
+        reason_code,
+        report_json
+      FROM scheduled_runs
+      WHERE username = ?
+        AND report_json IS NOT NULL
+      ORDER BY finished_at DESC, id DESC
+      LIMIT 1
+    `)
+    .get(username) as ScheduledRunRow | undefined;
+
+  return row
+    ? ({
+        source: "scheduled",
+        report: JSON.parse(row.report_json ?? "null") as RunReport,
+      } satisfies LastRunSummary)
+    : null;
+}
+
+export function getLatestManualRunForUsername(username: string) {
+  const row = getDatabase()
+    .prepare(`
+      SELECT
+        id,
+        username,
+        run_id,
+        started_at,
+        finished_at,
+        report_json
+      FROM manual_runs
+      WHERE username = ?
+      ORDER BY finished_at DESC, id DESC
+      LIMIT 1
+    `)
+    .get(username) as ManualRunRow | undefined;
+
+  return row ? mapManualRunRow(row) : null;
+}
+
+export function getLatestRunForUsername(username: string) {
+  const latestManual = getLatestManualRunForUsername(username);
+  const latestScheduled = getLatestExecutedScheduledRunForUsername(username);
+
+  if (!latestManual) {
+    return latestScheduled;
+  }
+
+  if (!latestScheduled) {
+    return latestManual;
+  }
+
+  return latestManual.report.finishedAt >= latestScheduled.report.finishedAt ? latestManual : latestScheduled;
+}
+
 export function insertDeletedItem(record: DeletedItemRecord) {
   getDatabase()
     .prepare(`
       INSERT INTO deleted_items (
         deleted_at,
+        run_id,
         session_id,
         job_id,
         username,
@@ -907,10 +1122,11 @@ export function insertDeletedItem(record: DeletedItemRecord) {
         edited_before_delete,
         rules_min_age_days,
         rules_max_score
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       record.deletedAt,
+      record.runId,
       record.sessionId,
       record.jobId,
       record.username,
@@ -937,6 +1153,7 @@ export function listDeletedItemsForUsername(username: string, limit = 100) {
       SELECT
         id,
         deleted_at,
+        run_id,
         session_id,
         job_id,
         username,
@@ -962,6 +1179,7 @@ export function listDeletedItemsForUsername(username: string, limit = 100) {
     .all(username, limit) as Array<{
     id: number;
     deleted_at: number;
+    run_id: string | null;
     session_id: string;
     job_id: string | null;
     username: string;
@@ -984,6 +1202,7 @@ export function listDeletedItemsForUsername(username: string, limit = 100) {
   return rows.map((row) => ({
     id: row.id,
     deletedAt: row.deleted_at,
+    runId: row.run_id,
     sessionId: row.session_id,
     jobId: row.job_id,
     username: row.username,
@@ -1007,4 +1226,41 @@ export function listDeletedItemsForUsername(username: string, limit = 100) {
       maxScore: row.rules_max_score,
     },
   })) satisfies DeletedItemHistoryEntry[];
+}
+
+export function listDeletedItemSnippetsForRunId(runId: string, limit = 3) {
+  const rows = getDatabase()
+    .prepare(`
+      SELECT
+        id,
+        deleted_at,
+        content_kind,
+        title,
+        body,
+        subreddit,
+        permalink
+      FROM deleted_items
+      WHERE run_id = ?
+      ORDER BY deleted_at DESC, id DESC
+      LIMIT ?
+    `)
+    .all(runId, limit) as Array<{
+    id: number;
+    deleted_at: number;
+    content_kind: PreviewItem["contentKind"];
+    title: string;
+    body: string;
+    subreddit: string;
+    permalink: string;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    deletedAt: row.deleted_at,
+    contentKind: row.content_kind,
+    title: row.title,
+    body: row.body,
+    subreddit: row.subreddit,
+    permalink: row.permalink,
+  })) satisfies DeletedItemSnippet[];
 }

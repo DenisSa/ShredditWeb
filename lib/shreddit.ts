@@ -1,12 +1,15 @@
 import {
   AccountSchedule,
   CleanupSettings,
+  DeletedItemSnippet,
   PreviewItem,
   PreviewResult,
   REQUIRED_SCOPES,
+  LastRunSummary,
   RunReport,
   ScheduledRunSummary,
   SessionSummary,
+  ThemePreference,
   JobSnapshot,
 } from "@/lib/shreddit-types";
 
@@ -14,12 +17,15 @@ export type {
   AccountSchedule,
   JobSnapshot,
   CleanupSettings,
+  DeletedItemSnippet,
   PreviewProgress,
   PreviewResult,
   RunProgress,
   RunReport,
   ScheduledRunSummary,
   SessionSummary,
+  LastRunSummary,
+  ThemePreference,
 } from "@/lib/shreddit-types";
 export { DEFAULT_STORE_DELETION_HISTORY } from "@/lib/shreddit-types";
 
@@ -90,6 +96,16 @@ export async function saveAccountSettings(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(input),
+  });
+}
+
+export async function saveThemePreference(theme: ThemePreference) {
+  return fetchJson<{ theme: ThemePreference }>("/api/settings/theme", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ theme }),
   });
 }
 
@@ -178,6 +194,14 @@ function trimSnippet(value: string, maxLength = 88) {
 }
 
 export function getItemSummary(item: PreviewItem) {
+  if (item.contentKind === "comment") {
+    return trimSnippet(item.body, 92) || `Comment in r/${item.subreddit}`;
+  }
+
+  return trimSnippet(item.title, 92) || `Post in r/${item.subreddit}`;
+}
+
+export function getDeletedSnippetSummary(item: DeletedItemSnippet) {
   if (item.contentKind === "comment") {
     return trimSnippet(item.body, 92) || `Comment in r/${item.subreddit}`;
   }

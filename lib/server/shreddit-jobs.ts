@@ -26,7 +26,9 @@ import { tryAcquireAccountRun, releaseAccountRun } from "@/lib/server/shreddit-r
 function buildUnexpectedReport(
   session: ServerSessionRecord,
   preview: PreviewResult,
+  settings: CleanupSettings,
   dryRun: boolean,
+  runId: string,
   error: unknown,
   lastProgress: RunProgress | null,
 ) {
@@ -38,12 +40,14 @@ function buildUnexpectedReport(
       : "unexpected";
 
   return {
+    runId,
     status: "stopped",
     stopReasonCode,
     stopReason: toUserMessage(error),
     startedAt: Date.now(),
     finishedAt: Date.now(),
     dryRun,
+    storedDeletionHistory: settings.storeDeletionHistory,
     username: session.reddit?.username ?? preview.username,
     rules: preview.rules,
     totals: {
@@ -72,15 +76,18 @@ function launchJob(
         preview,
         settings,
         dryRun,
-        job.jobId,
-        (progress) => {
-        setJobProgress(job, progress);
-      },
+        {
+          runId: job.jobId,
+          jobId: job.jobId,
+          onProgress: (progress) => {
+            setJobProgress(job, progress);
+          },
+        },
       );
 
       finalizeJob(job, report);
     } catch (error) {
-      finalizeJob(job, buildUnexpectedReport(session, preview, dryRun, error, job.progress));
+      finalizeJob(job, buildUnexpectedReport(session, preview, settings, dryRun, job.jobId, error, job.progress));
     }
   })();
 }

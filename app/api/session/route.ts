@@ -4,7 +4,10 @@ import {
 } from "@/lib/shreddit-types";
 import {
   ensureAccountSettings,
+  ensureAccountPreferences,
+  getLatestRunForUsername,
   getLatestScheduledRunForUsername,
+  listDeletedItemSnippetsForRunId,
   loadAccountSchedule,
   loadPersistedAccountAuth,
   upsertPersistedAccountGrant,
@@ -14,6 +17,7 @@ import {
   getPublicSessionDefaults,
 } from "@/lib/server/shreddit-core";
 import { jsonNoStore } from "@/lib/server/shreddit-responses";
+import { DEFAULT_THEME_PREFERENCE } from "@/lib/server/shreddit-theme";
 import {
   getActiveJobForSession,
   getSessionFromRequest,
@@ -32,6 +36,11 @@ export async function GET(request: NextRequest) {
         ...getDefaultCleanupSettings(),
         storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
       };
+  const accountPreferences = session?.reddit
+    ? ensureAccountPreferences(session.reddit.username)
+    : {
+        theme: DEFAULT_THEME_PREFERENCE,
+      };
   const accountAuth =
     session?.reddit
       ? (() => {
@@ -46,6 +55,11 @@ export async function GET(request: NextRequest) {
       : null;
   const schedule = session?.reddit ? loadAccountSchedule(session.reddit.username) : null;
   const lastScheduledRun = session?.reddit ? getLatestScheduledRunForUsername(session.reddit.username) : null;
+  const lastRun = session?.reddit ? getLatestRunForUsername(session.reddit.username) : null;
+  const lastRunDeletedSnippets =
+    lastRun && !lastRun.report.dryRun && lastRun.report.storedDeletionHistory
+      ? listDeletedItemSnippetsForRunId(lastRun.report.runId, 3)
+      : [];
 
   return jsonNoStore({
     ...defaults,
@@ -59,9 +73,12 @@ export async function GET(request: NextRequest) {
     settings: accountSettings,
     preferences: {
       storeDeletionHistory: accountSettings.storeDeletionHistory,
+      theme: accountPreferences.theme,
     },
     schedule,
     requiresReconnect: accountAuth?.requiresReconnect ?? false,
     lastScheduledRun,
+    lastRun,
+    lastRunDeletedSnippets,
   });
 }

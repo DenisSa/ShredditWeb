@@ -1,14 +1,23 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   clearPersistedAccountGrant,
   disableAccountSchedule,
+  ensureAccountPreferences,
   ensureAccountSettings,
+  getLatestRunForUsername,
+  listDeletedItemSnippetsForRunId,
   loadAccountSchedule,
+  loadAccountPreferences,
   loadPersistedAccountAuth,
+  insertDeletedItem,
+  insertManualRun,
+  insertScheduledRun,
   resetDatabaseForTests,
   upsertAccountSchedule,
+  upsertAccountThemePreference,
   upsertPersistedAccountGrant,
   upsertPersistedSession,
   upsertAccountSettings,
@@ -137,5 +146,157 @@ describe("shreddit-db account lifecycle", () => {
 
     expect(loadPersistedAccountAuth("alice")?.grant?.username).toBe("alice");
     expect(loadAccountSchedule("alice")?.enabled).toBe(true);
+  });
+
+  it("upgrades legacy account preferences rows with a default dark theme", () => {
+    const database = new DatabaseSync(join(sandboxDir, "shreddit.sqlite"));
+    database.exec(`
+      CREATE TABLE account_preferences (
+        username TEXT PRIMARY KEY COLLATE NOCASE,
+        store_deletion_history INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      );
+
+      INSERT INTO account_preferences (username, store_deletion_history, updated_at)
+      VALUES ('alice', 1, 123);
+    `);
+    database.close();
+    resetDatabaseForTests();
+
+    expect(loadAccountPreferences("alice")).toMatchObject({
+      username: "alice",
+      theme: "dark",
+    });
+    expect(ensureAccountPreferences("alice").theme).toBe("dark");
+  });
+
+  it("persists theme preference per account", () => {
+    expect(ensureAccountPreferences("alice").theme).toBe("dark");
+
+    upsertAccountThemePreference("alice", "light");
+
+    expect(loadAccountPreferences("alice")).toMatchObject({
+      username: "alice",
+      theme: "light",
+    });
+  });
+
+  it("selects the latest executed run and returns deleted snippets by run id", () => {
+    const manualReport = {
+      runId: "manual-run-1",
+      status: "completed" as const,
+      startedAt: Date.parse("2026-04-20T09:00:00Z"),
+      finishedAt: Date.parse("2026-04-20T09:05:00Z"),
+      dryRun: false,
+      storedDeletionHistory: true,
+      username: "alice",
+      rules: {
+        minAgeDays: 7,
+        maxScore: 100,
+        cutoffUnix: 1,
+      },
+      totals: {
+        discovered: 2,
+        eligible: 2,
+        processed: 2,
+        edited: 1,
+        deleted: 2,
+        failed: 0,
+      },
+      failures: [],
+    };
+    const scheduledReport = {
+      ...manualReport,
+      runId: "scheduled-run-1",
+      finishedAt: Date.parse("2026-04-20T10:05:00Z"),
+    };
+
+    insertManualRun({
+      username: "alice",
+      report: manualReport,
+    });
+    insertScheduledRun({
+      username: "alice",
+      runId: null,
+      status: "skipped",
+      startedAt: Date.parse("2026-04-20T10:30:00Z"),
+      finishedAt: Date.parse("2026-04-20T10:30:00Z"),
+      message: "Already running.",
+      reasonCode: "already-running",
+      report: null,
+    });
+    insertScheduledRun({
+      username: "alice",
+      runId: scheduledReport.runId,
+      status: scheduledReport.status,
+      startedAt: scheduledReport.startedAt,
+      finishedAt: scheduledReport.finishedAt,
+      message: "Completed",
+      reasonCode: null,
+      report: scheduledReport,
+    });
+    insertDeletedItem({
+      deletedAt: Date.parse("2026-04-20T10:04:00Z"),
+      runId: scheduledReport.runId,
+      sessionId: "scheduled:alice",
+      jobId: null,
+      username: "alice",
+      item: {
+        id: "t1_1",
+        name: "t1_1",
+        thingKind: "t1",
+        contentKind: "comment",
+        title: "",
+        body: "First deleted comment",
+        score: 1,
+        createdUtc: 1,
+        subreddit: "typescript",
+        permalink: "https://reddit.example/1",
+        eligible: true,
+        reason: "",
+      },
+      editedBeforeDelete: true,
+      rules: scheduledReport.rules,
+    });
+    insertDeletedItem({
+      deletedAt: Date.parse("2026-04-20T10:03:00Z"),
+      runId: scheduledReport.runId,
+      sessionId: "scheduled:alice",
+      jobId: null,
+      username: "alice",
+      item: {
+        id: "t3_1",
+        name: "t3_1",
+        thingKind: "t3",
+        contentKind: "selfPost",
+        title: "Deleted post title",
+        body: "Deleted post body",
+        score: 1,
+        createdUtc: 1,
+        subreddit: "nextjs",
+        permalink: "https://reddit.example/2",
+        eligible: true,
+        reason: "",
+      },
+      editedBeforeDelete: false,
+      rules: scheduledReport.rules,
+    });
+
+    expect(getLatestRunForUsername("alice")).toMatchObject({
+      source: "scheduled",
+      report: {
+        runId: "scheduled-run-1",
+      },
+    });
+    expect(listDeletedItemSnippetsForRunId("scheduled-run-1", 3)).toEqual([
+      expect.objectContaining({
+        subreddit: "typescript",
+        body: "First deleted comment",
+      }),
+      expect.objectContaining({
+        subreddit: "nextjs",
+        title: "Deleted post title",
+      }),
+    ]);
   });
 });

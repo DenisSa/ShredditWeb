@@ -4,7 +4,15 @@ import {
   initializeAuthenticatedAccount,
   toUserMessage,
 } from "@/lib/server/shreddit-core";
-import { redirectHomeWithAuthError } from "@/lib/server/shreddit-responses";
+import {
+  ensureAccountPreferences,
+} from "@/lib/server/shreddit-db";
+import {
+  redirectHomeWithAuthError,
+} from "@/lib/server/shreddit-responses";
+import {
+  setThemePreferenceCookie,
+} from "@/lib/server/shreddit-theme";
 import {
   getSessionFromRequest,
   setSessionCookie,
@@ -66,6 +74,7 @@ export async function GET(request: NextRequest) {
 
     const response = NextResponse.redirect(buildHomeUrl(request.url));
     setSessionCookie(response, session.id);
+    setThemePreferenceCookie(response, ensureAccountPreferences(redditGrant.username).theme);
     return response;
   } catch (callbackError) {
     updateSession(session, {

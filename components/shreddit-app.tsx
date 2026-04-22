@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Logo } from "@/components/icons";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   DEFAULT_STORE_DELETION_HISTORY,
   type JobSnapshot,
@@ -25,6 +26,7 @@ import {
   formatExpiry,
   formatTimestamp,
   getBrowserTimezone,
+  getDeletedSnippetSummary,
   getItemSummary,
   logoutRedditSession,
   requestPreview,
@@ -63,14 +65,17 @@ const DEFAULT_SESSION_SUMMARY: SessionSummary = {
   },
   preferences: {
     storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
+    theme: "dark",
   },
   schedule: null,
   requiresReconnect: false,
   lastScheduledRun: null,
+  lastRun: null,
+  lastRunDeletedSnippets: [],
 };
 
 function surfaceClassName(extra = "") {
-  return `rounded-[24px] border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_20px_48px_rgba(15,23,42,0.06)] ${extra}`.trim();
+  return `rounded-[24px] border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_20px_48px_var(--page-shadow)] ${extra}`.trim();
 }
 
 function subtlePanelClassName(extra = "") {
@@ -238,6 +243,121 @@ function SummaryRow({
   );
 }
 
+function LastRunCard({
+  lastRun,
+  snippets,
+}: {
+  lastRun: SessionSummary["lastRun"];
+  snippets: SessionSummary["lastRunDeletedSnippets"];
+}) {
+  if (!lastRun) {
+    return (
+      <section className={surfaceClassName("p-5 sm:p-6")}>
+        <div className="flex flex-col gap-3">
+          <div>
+            <p className={sectionLabelClassName()}>Recent activity</p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">Last run</h2>
+          </div>
+          <div className={`${subtlePanelClassName("px-4 py-5")} text-sm leading-7 text-[color:var(--page-muted)]`}>
+            No cleanup runs have finished yet. Once a manual or scheduled run completes, its outcome will show up here.
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const primaryLabel = lastRun.report.dryRun ? "Would delete" : "Deleted";
+  const snippetEmptyMessage = lastRun.report.dryRun
+    ? "Dry runs never store deleted content snippets."
+    : lastRun.report.totals.deleted === 0
+      ? "This run did not delete any items."
+      : !lastRun.report.storedDeletionHistory
+        ? "Deleted history was turned off for this run."
+        : "No deleted content preview is available for this run.";
+
+  return (
+    <section className={surfaceClassName("p-5 sm:p-6")}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className={sectionLabelClassName()}>Recent activity</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">Last run</h2>
+          <p className="mt-2 text-sm leading-7 text-[color:var(--page-muted)]">
+            {lastRun.source === "manual" ? "Started from this dashboard." : "Triggered by the saved schedule."} Finished{" "}
+            {formatTimestamp(lastRun.report.finishedAt)}.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full bg-[rgba(91,103,118,0.12)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--page-muted-strong)]">
+            {lastRun.source}
+          </span>
+          <span className="rounded-full bg-[rgba(91,103,118,0.12)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--page-muted-strong)]">
+            {lastRun.report.dryRun ? "Dry run" : "Live deletion"}
+          </span>
+          <span className="rounded-full bg-[rgba(91,103,118,0.12)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--page-muted-strong)]">
+            {lastRun.report.status}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+        <div>
+          <p className={sectionLabelClassName()}>{primaryLabel}</p>
+          <p className="mt-2 text-5xl font-semibold tracking-[-0.04em] text-[color:var(--page-ink)]">
+            {lastRun.report.totals.deleted}
+          </p>
+          <p className="mt-3 text-sm leading-7 text-[color:var(--page-muted)]">
+            Processed {lastRun.report.totals.processed} of {lastRun.report.totals.eligible} eligible items with{" "}
+            {lastRun.report.totals.failed} failures.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
+          <CompactMetric label="Processed" value={lastRun.report.totals.processed} />
+          <CompactMetric label="Failed" value={lastRun.report.totals.failed} />
+          <CompactMetric label="Finished" value={formatTimestamp(lastRun.report.finishedAt)} />
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <p className={sectionLabelClassName()}>Deleted preview</p>
+        {snippets.length === 0 ? (
+          <div className={`${subtlePanelClassName("mt-3 px-4 py-5")} text-sm leading-7 text-[color:var(--page-muted)]`}>
+            {snippetEmptyMessage}
+          </div>
+        ) : (
+          <div className={`${subtlePanelClassName("mt-3 overflow-hidden")}`}>
+            <div className="divide-y divide-[color:var(--page-border)]">
+              {snippets.map((snippet) => (
+                <div className="px-4 py-4" key={snippet.id}>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex rounded-full bg-[rgba(91,103,118,0.12)] px-2.5 py-1 text-xs font-medium text-[color:var(--page-muted-strong)]">
+                          {snippet.contentKind === "comment" ? "Comment" : "Post"}
+                        </span>
+                        <span className="text-sm font-medium text-[color:var(--page-ink)]">r/{snippet.subreddit}</span>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-[color:var(--page-ink)]">{getDeletedSnippetSummary(snippet)}</p>
+                    </div>
+                    <a
+                      className="shrink-0 text-sm font-medium text-[color:var(--page-accent)] underline-offset-4 hover:underline"
+                      href={snippet.permalink}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Open
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function ProgressMeter({ value }: { value: number }) {
   return (
     <div className="h-2 overflow-hidden rounded-full bg-[rgba(91,103,118,0.10)]">
@@ -308,7 +428,7 @@ function PreviewList({
         <div>
           <h2 className="text-xl font-semibold tracking-tight text-[color:var(--page-ink)]">Result detail</h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-[color:var(--page-muted)]">
-            Review the matching content before you launch a run. Excluded items help explain why some history was skipped.
+            Use this supporting detail view to inspect matched items, compare comments versus posts, and understand exclusions.
           </p>
         </div>
 
@@ -321,7 +441,7 @@ function PreviewList({
                 aria-pressed={isActive}
                 className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium transition ${
                   isActive
-                    ? "bg-[color:var(--page-ink)] text-white"
+                    ? "bg-[color:var(--page-control-strong)] text-[color:var(--page-control-strong-text)]"
                     : "border border-[color:var(--page-border)] bg-[color:var(--page-surface-strong)] text-[color:var(--page-muted-strong)] hover:border-[color:var(--page-border-strong)]"
                 }`}
                 key={option.id}
@@ -329,7 +449,9 @@ function PreviewList({
                 type="button"
               >
                 <span>{option.label}</span>
-                <span className={`rounded-full px-2 py-0.5 text-xs ${isActive ? "bg-white/15" : "bg-[rgba(91,103,118,0.12)]"}`}>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs ${isActive ? "bg-[color:var(--page-control-strong-tint)]" : "bg-[rgba(91,103,118,0.12)]"}`}
+                >
                   {option.count}
                 </span>
               </button>
@@ -443,7 +565,7 @@ function HydrationShell() {
     <div className="pb-10">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface)]">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_10px_30px_var(--page-shadow-soft)]">
             <Logo className="text-[color:var(--page-accent)]" size={22} />
           </div>
           <div>
@@ -941,7 +1063,7 @@ export function ShredditApp() {
     <div className="pb-10">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_10px_30px_var(--page-shadow-soft)]">
             <Logo className="text-[color:var(--page-accent)]" size={22} />
           </div>
           <div>
@@ -953,6 +1075,20 @@ export function ShredditApp() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <ThemeToggle
+            authenticated={Boolean(session)}
+            onError={setAuthError}
+            onSaved={(theme) => {
+              setSessionSummary((current) => ({
+                ...current,
+                preferences: {
+                  ...current.preferences,
+                  theme,
+                },
+              }));
+            }}
+            preferredTheme={sessionSummary.preferences.theme}
+          />
           <Link
             className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface)] px-4 py-2 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)]"
             href="/settings"
@@ -971,6 +1107,8 @@ export function ShredditApp() {
           <section className={surfaceClassName("p-5 sm:p-6")}>
             <Stepper steps={stepItems} />
           </section>
+
+          <LastRunCard lastRun={sessionSummary.lastRun} snippets={sessionSummary.lastRunDeletedSnippets} />
 
           <section className={surfaceClassName("p-5 sm:p-6")}>
             {activeStep === "connect" ? (
@@ -1038,7 +1176,7 @@ export function ShredditApp() {
                   </div>
                   <div className="flex flex-wrap gap-3">
                     <button
-                      className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-ink)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0d1826] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-control-strong)] px-5 py-3 text-sm font-semibold text-[color:var(--page-control-strong-text)] transition hover:bg-[color:var(--page-control-strong-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={!session || isPreviewing || isRunning}
                       onClick={handlePreview}
                     >
@@ -1050,20 +1188,15 @@ export function ShredditApp() {
                 <StatusStack messages={statusMessages} />
 
                 {preview ? (
-                  <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-                    <div>
-                      <p className={sectionLabelClassName()}>Eligible now</p>
-                      <p className="mt-2 text-5xl font-semibold tracking-[-0.04em] text-[color:var(--page-ink)]">
-                        {previewEligibleCount}
-                      </p>
-                      <p className="mt-3 text-sm leading-7 text-[color:var(--page-muted)]">
-                        From {previewDiscoveredCount} items scanned. Preview generated {formatTimestamp(preview.generatedAt)}.
-                      </p>
-                    </div>
-
-                    <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-                      <CompactMetric label="Comments scanned" value={preview.counts.commentsDiscovered} />
-                      <CompactMetric label="Posts scanned" value={preview.counts.postsDiscovered} />
+                  <div className={subtlePanelClassName("px-4 py-4")}>
+                    <div className="grid gap-4 md:grid-cols-4">
+                      <CompactMetric
+                        hint={`Preview generated ${formatTimestamp(preview.generatedAt)}.`}
+                        label="Eligible"
+                        value={previewEligibleCount}
+                      />
+                      <CompactMetric label="Scanned" value={previewDiscoveredCount} />
+                      <CompactMetric label="Comments" value={preview.counts.commentsDiscovered} />
                       <CompactMetric label="Excluded" value={Math.max(0, preview.allItems.length - previewEligibleCount)} />
                     </div>
                   </div>
@@ -1209,6 +1342,42 @@ export function ShredditApp() {
             ) : null}
           </section>
 
+          {isRunning ? (
+            <section className={surfaceClassName("p-5 sm:p-6")}>
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className={sectionLabelClassName()}>Active run</p>
+                  <h2 className="mt-2 text-xl font-semibold tracking-tight text-[color:var(--page-ink)]">
+                    {runProgress?.currentLabel || "Cleanup in progress"}
+                  </h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-7 text-[color:var(--page-muted)]">
+                    {runProgress?.currentStep || "The server will keep working even if this page refreshes."}
+                  </p>
+                </div>
+                <p className="text-sm font-semibold text-[color:var(--page-muted-strong)]">{progressPercent}%</p>
+              </div>
+
+              <div className="mt-5">
+                <ProgressMeter value={progressPercent} />
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-3">
+                <div className={subtlePanelClassName("px-4 py-4")}>
+                  <p className={sectionLabelClassName()}>Processed</p>
+                  <p className="mt-1 text-lg font-semibold text-[color:var(--page-ink)]">{runProgress?.processed ?? 0}</p>
+                </div>
+                <div className={subtlePanelClassName("px-4 py-4")}>
+                  <p className={sectionLabelClassName()}>Deleted</p>
+                  <p className="mt-1 text-lg font-semibold text-[color:var(--page-ink)]">{runProgress?.deleted ?? 0}</p>
+                </div>
+                <div className={subtlePanelClassName("px-4 py-4")}>
+                  <p className={sectionLabelClassName()}>Failed</p>
+                  <p className="mt-1 text-lg font-semibold text-[color:var(--page-ink)]">{runProgress?.failed ?? 0}</p>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
           {activeStep === "connect" ? (
             <section className={surfaceClassName("p-5 sm:p-6")}>
               <h2 className="text-xl font-semibold tracking-tight text-[color:var(--page-ink)]">Connection detail</h2>
@@ -1260,7 +1429,7 @@ export function ShredditApp() {
                       {showReportDetails ? "Hide report detail" : "View report detail"}
                     </button>
                     <button
-                      className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-ink)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#0d1826] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-control-strong)] px-4 py-2 text-sm font-semibold text-[color:var(--page-control-strong-text)] transition hover:bg-[color:var(--page-control-strong-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={!runReport}
                       onClick={handleDownloadReport}
                     >
@@ -1282,32 +1451,6 @@ export function ShredditApp() {
         </div>
 
         <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
-          <SummaryCard title="Saved rules">
-            <div className="divide-y divide-[color:var(--page-border)]">
-              <SummaryRow
-                hint="Items must be older than this age to be eligible."
-                label="Minimum age"
-                value={`${sessionSummary.settings.minAgeDays} days`}
-              />
-              <SummaryRow
-                hint="Items at or above this score stay untouched."
-                label="Maximum score"
-                value={sessionSummary.settings.maxScore}
-              />
-              <SummaryRow
-                hint="Live deletions can optionally keep original content in SQLite."
-                label="Deleted history"
-                value={sessionSummary.settings.storeDeletionHistory ? "Stored" : "Not stored"}
-              />
-            </div>
-
-            <p className="mt-4 text-sm leading-6 text-[color:var(--page-muted)]">
-              {previewIsCurrent
-                ? "The current preview matches the saved rules."
-                : "The current preview is out of date for the saved rules."}
-            </p>
-          </SummaryCard>
-
           <SummaryCard title="Session">
             <div className="divide-y divide-[color:var(--page-border)]">
               <SummaryRow
@@ -1388,94 +1531,6 @@ export function ShredditApp() {
                   ? "Automation is live and waiting for its next scheduled run."
                   : "Automation is off."}
             </div>
-          </SummaryCard>
-
-          <SummaryCard title="Run progress">
-            <div>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-base font-semibold text-[color:var(--page-ink)]">
-                    {runProgress?.currentLabel || runReport?.status || "Idle"}
-                  </p>
-                  <p className="mt-1 text-sm leading-6 text-[color:var(--page-muted)]">
-                    {runProgress?.currentStep ||
-                      runReport?.stopReason ||
-                      "Runs execute on the server and the UI can reconnect if the page refreshes."}
-                  </p>
-                </div>
-                <p className="text-sm font-semibold text-[color:var(--page-muted-strong)]">{progressPercent}%</p>
-              </div>
-
-              <div className="mt-4">
-                <ProgressMeter value={progressPercent} />
-              </div>
-
-              <div className="mt-4 grid grid-cols-3 gap-3">
-                <div className={subtlePanelClassName("px-3 py-3")}>
-                  <p className={sectionLabelClassName()}>Processed</p>
-                  <p className="mt-1 text-lg font-semibold text-[color:var(--page-ink)]">
-                    {runProgress?.processed ?? runReport?.totals.processed ?? 0}
-                  </p>
-                </div>
-                <div className={subtlePanelClassName("px-3 py-3")}>
-                  <p className={sectionLabelClassName()}>Deleted</p>
-                  <p className="mt-1 text-lg font-semibold text-[color:var(--page-ink)]">
-                    {runProgress?.deleted ?? runReport?.totals.deleted ?? 0}
-                  </p>
-                </div>
-                <div className={subtlePanelClassName("px-3 py-3")}>
-                  <p className={sectionLabelClassName()}>Failed</p>
-                  <p className="mt-1 text-lg font-semibold text-[color:var(--page-ink)]">
-                    {runProgress?.failed ?? runReport?.totals.failed ?? 0}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </SummaryCard>
-
-          <SummaryCard title={runReport ? "Latest result" : "Preview"}>
-            {runReport ? (
-              <div>
-                <div className="divide-y divide-[color:var(--page-border)]">
-                  <SummaryRow label="Finished" value={formatTimestamp(runReport.finishedAt)} />
-                  <SummaryRow label="Mode" value={runReport.dryRun ? "Dry run" : "Live deletion"} />
-                  <SummaryRow label="Status" value={runReport.status} />
-                  <SummaryRow label="Eligible" value={runReport.totals.eligible} />
-                  <SummaryRow label="Failures" value={runReport.failures.length} />
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-3">
-                  <button
-                    className="inline-flex items-center justify-center rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface-strong)] px-4 py-2 text-sm font-semibold text-[color:var(--page-ink)] transition hover:border-[color:var(--page-border-strong)]"
-                    onClick={() => setShowReportDetails((current) => !current)}
-                    type="button"
-                  >
-                    {showReportDetails ? "Hide detail" : "Show detail"}
-                  </button>
-                  <button
-                    className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-ink)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#0d1826] disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={!runReport}
-                    onClick={handleDownloadReport}
-                  >
-                    Download
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="divide-y divide-[color:var(--page-border)]">
-                <SummaryRow
-                  hint={preview ? `Generated ${formatTimestamp(preview.generatedAt)}` : "Run a preview scan to populate this summary."}
-                  label="Eligible"
-                  value={previewEligibleCount}
-                />
-                <SummaryRow label="Scanned" value={previewDiscoveredCount} />
-                <SummaryRow
-                  label="Comments"
-                  value={preview?.counts.eligibleComments ?? previewProgress?.commentsDiscovered ?? 0}
-                />
-                <SummaryRow label="Posts" value={preview?.counts.eligiblePosts ?? previewProgress?.postsDiscovered ?? 0} />
-              </div>
-            )}
           </SummaryCard>
         </aside>
       </div>

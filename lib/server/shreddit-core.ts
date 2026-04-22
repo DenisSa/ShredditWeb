@@ -3,6 +3,7 @@ import "server-only";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import {
+  ensureAccountPreferences,
   clearPersistedAccountGrant,
   ensureAccountSettings,
   insertDeletedItem,
@@ -423,6 +424,7 @@ export function createAccountRedditContext(auth: {
 export function initializeAuthenticatedAccount(grant: PersistedRedditGrant) {
   upsertPersistedAccountGrant(grant);
   ensureAccountSettings(grant.username, getDefaultCleanupSettings());
+  ensureAccountPreferences(grant.username);
 }
 
 async function refreshRedditGrant(context: RedditRuntimeContext, force = false) {
@@ -779,13 +781,17 @@ export async function runShred(
   preview: PreviewResult,
   settings: CleanupSettings,
   dryRun: boolean,
-  jobId?: string,
-  onProgress?: (progress: RunProgress) => void,
+  options: {
+    runId?: string;
+    jobId?: string;
+    onProgress?: (progress: RunProgress) => void;
+  } = {},
 ) {
   const reddit = await refreshRedditGrant(context);
   const failures: RunFailure[] = [];
   const rules = preview.rules;
   const historySessionId = context.sessionId ?? `scheduled:${reddit.username}`;
+  const runId = options.runId ?? options.jobId ?? randomUUID();
 
   let processed = 0;
   let deleted = 0;
@@ -793,7 +799,7 @@ export async function runShred(
   let stopReasonCode: RunReport["stopReasonCode"];
   let stopReason: string | undefined;
 
-  onProgress?.({
+  options.onProgress?.({
     phase: "starting",
     processed,
     edited,
@@ -813,7 +819,7 @@ export async function runShred(
 
     try {
       if (dryRun) {
-        onProgress?.({
+        options.onProgress?.({
           phase: "dry-run",
           processed,
           edited,
@@ -827,7 +833,7 @@ export async function runShred(
         await delay(DRY_RUN_DELAY_MS);
       } else {
         if (shouldOverwrite) {
-          onProgress?.({
+          options.onProgress?.({
             phase: "editing",
             processed,
             edited,
@@ -844,7 +850,7 @@ export async function runShred(
           await delay(COMMENT_EDIT_DELAY_MS);
         }
 
-        onProgress?.({
+        options.onProgress?.({
           phase: "deleting",
           processed,
           edited,
@@ -860,8 +866,9 @@ export async function runShred(
         if (settings.storeDeletionHistory) {
           insertDeletedItem({
             deletedAt: Date.now(),
+            runId,
             sessionId: historySessionId,
-            jobId: jobId ?? null,
+            jobId: options.jobId ?? null,
             username: reddit.username,
             item,
             editedBeforeDelete,
@@ -900,12 +907,14 @@ export async function runShred(
   }
 
   const report = {
+    runId,
     status: stopReasonCode ? "stopped" : "completed",
     stopReasonCode,
     stopReason,
     startedAt,
     finishedAt: Date.now(),
     dryRun,
+    storedDeletionHistory: settings.storeDeletionHistory,
     username: reddit.username,
     rules,
     totals: {
@@ -919,7 +928,7 @@ export async function runShred(
     failures,
   } satisfies RunReport;
 
-  onProgress?.({
+  options.onProgress?.({
     phase: "done",
     processed: report.totals.processed,
     edited: report.totals.edited,

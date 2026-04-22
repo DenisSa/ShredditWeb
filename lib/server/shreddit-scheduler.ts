@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import {
   createAccountRedditContext,
   buildPreview as buildPreviewFromReddit,
@@ -98,6 +99,7 @@ async function processSchedule(
 ) {
   const nextRunAt = advanceSchedule(schedule, now);
   const startedAt = now;
+  const runId = randomUUID();
   const auth = dependencies.loadPersistedAccountAuth(schedule.username);
 
   if (!auth?.grant) {
@@ -105,6 +107,7 @@ async function processSchedule(
 
     dependencies.insertScheduledRun({
       username: schedule.username,
+      runId: null,
       status: "stopped",
       startedAt,
       finishedAt: now,
@@ -123,6 +126,7 @@ async function processSchedule(
 
     dependencies.insertScheduledRun({
       username: schedule.username,
+      runId: null,
       status: "skipped",
       startedAt,
       finishedAt: now,
@@ -147,11 +151,12 @@ async function processSchedule(
     );
     const context = createAccountRedditContext(auth);
     const preview = await dependencies.buildPreview(context, settings);
-    const report = await dependencies.runShred(context, preview, settings, false);
+    const report = await dependencies.runShred(context, preview, settings, false, { runId });
     const runMessage = createScheduledRunMessage(report.status, report.stopReason ?? null);
 
     dependencies.insertScheduledRun({
       username: schedule.username,
+      runId: report.runId,
       status: report.status,
       startedAt: report.startedAt,
       finishedAt: report.finishedAt,
@@ -178,6 +183,7 @@ async function processSchedule(
 
     dependencies.insertScheduledRun({
       username: schedule.username,
+      runId: null,
       status: result.status,
       startedAt,
       finishedAt,

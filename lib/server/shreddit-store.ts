@@ -7,6 +7,7 @@ import {
   RunReport,
 } from "@/lib/shreddit-types";
 import {
+  insertManualRun,
   deleteExpiredPersistedSessions,
   deletePersistedSession,
   loadPersistedSession,
@@ -378,6 +379,10 @@ export function finalizeJob(job: ServerJobRecord, report: RunReport) {
   job.report = report;
   job.status = report.status;
   job.updatedAt = Date.now();
+  insertManualRun({
+    username: job.username,
+    report,
+  });
   releaseAccountRun(job.username);
   publishJobEvent(job, report.status === "completed" ? "complete" : "error");
 }

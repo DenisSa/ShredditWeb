@@ -1,9 +1,11 @@
 export const REQUIRED_SCOPES = ["identity", "history", "edit"] as const;
 export const DEFAULT_STORE_DELETION_HISTORY = true;
 export const SCHEDULE_CADENCES = ["hourly", "daily", "weekly"] as const;
+export const THEME_PREFERENCES = ["dark", "light"] as const;
 
 export type RequiredScope = (typeof REQUIRED_SCOPES)[number];
 export type ScheduleCadence = (typeof SCHEDULE_CADENCES)[number];
+export type ThemePreference = (typeof THEME_PREFERENCES)[number];
 
 export type ShredRules = {
   minAgeDays: number;
@@ -74,12 +76,14 @@ export type RunFailure = {
 };
 
 export type RunReport = {
+  runId: string;
   status: "completed" | "stopped";
   stopReasonCode?: "auth-expired" | "connectivity" | "unexpected";
   stopReason?: string;
   startedAt: number;
   finishedAt: number;
   dryRun: boolean;
+  storedDeletionHistory: boolean;
   username: string;
   rules: ShredRules;
   totals: {
@@ -104,6 +108,7 @@ export type JobSnapshot = {
 
 export type AccountPreferences = {
   storeDeletionHistory: boolean;
+  theme: ThemePreference;
 };
 
 export type ScheduledRunStatus = "completed" | "stopped" | "skipped";
@@ -124,12 +129,30 @@ export type AccountSchedule = {
 export type ScheduledRunSummary = {
   id: number;
   username: string;
+  runId: string | null;
   status: ScheduledRunStatus;
   startedAt: number;
   finishedAt: number;
   message: string | null;
   reasonCode: ScheduledRunReasonCode | null;
   report: RunReport | null;
+};
+
+export type LastRunSource = "manual" | "scheduled";
+
+export type LastRunSummary = {
+  source: LastRunSource;
+  report: RunReport;
+};
+
+export type DeletedItemSnippet = {
+  id: number;
+  deletedAt: number;
+  contentKind: ContentKind;
+  title: string;
+  body: string;
+  subreddit: string;
+  permalink: string;
 };
 
 export type SessionSummary = {
@@ -148,6 +171,8 @@ export type SessionSummary = {
   schedule: AccountSchedule | null;
   requiresReconnect: boolean;
   lastScheduledRun: ScheduledRunSummary | null;
+  lastRun: LastRunSummary | null;
+  lastRunDeletedSnippets: DeletedItemSnippet[];
 };
 
 export type RunStartResponse = {

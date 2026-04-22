@@ -2,7 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+html.dark {
+  --page-bg: #091019;
+  --page-surface: rgba(14, 24, 37, 0.88);
+  --page-surface-strong: #111d2c;
+  --page-border: rgba(140, 167, 197, 0.16);
+  --page-border-strong: rgba(181, 205, 232, 0.28);
+  --page-ink: #edf3fb;
+  --page-muted: #94a5ba;
+  --page-muted-strong: #ced8e7;
+  --page-accent: #d46b43;
+  --page-accent-strong: #f08961;
+  --page-success: #63b98e;
+  --page-warning: #d8a04d;
+  --page-danger: #dd7474;
+  --page-shadow: rgba(0, 0, 0, 0.28);
+  --page-shadow-soft: rgba(0, 0, 0, 0.18);
+  --page-control-strong: #233446;
+  --page-control-strong-hover: #2b3f55;
+  --page-control-strong-text: #f5f8fc;
+  --page-control-strong-tint: rgba(255, 255, 255, 0.14);
+}
+
+html.light {
   --page-bg: #eef2f5;
   --page-surface: rgba(255, 255, 255, 0.9);
   --page-surface-strong: #ffffff;
@@ -16,6 +39,12 @@
   --page-success: #2d6a4f;
   --page-warning: #a56a16;
   --page-danger: #a63636;
+  --page-shadow: rgba(15, 23, 42, 0.06);
+  --page-shadow-soft: rgba(15, 23, 42, 0.05);
+  --page-control-strong: #102033;
+  --page-control-strong-hover: #0b1828;
+  --page-control-strong-text: #ffffff;
+  --page-control-strong-tint: rgba(255, 255, 255, 0.14);
 }
 
 * {
@@ -24,6 +53,12 @@
 
 html {
   min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(212, 107, 67, 0.16), transparent 28%),
+    linear-gradient(180deg, rgba(9, 16, 25, 0.96), var(--page-bg));
+}
+
+html.light {
   background:
     radial-gradient(circle at top left, rgba(199, 81, 46, 0.08), transparent 26%),
     linear-gradient(180deg, #f8fafb, var(--page-bg));
@@ -34,10 +69,16 @@ body {
   margin: 0;
   color: var(--page-ink);
   background:
-    radial-gradient(circle at 10% 10%, rgba(255, 255, 255, 0.65), transparent 22%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.18));
+    radial-gradient(circle at 10% 10%, rgba(255, 255, 255, 0.05), transparent 24%),
+    linear-gradient(180deg, rgba(10, 18, 30, 0.62), rgba(5, 10, 18, 0.3));
   font-family: var(--font-sans), "Segoe UI", sans-serif;
   line-height: 1.5;
+}
+
+html.light body {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(255, 255, 255, 0.65), transparent 22%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.18));
 }
 
 a {
