@@ -20,9 +20,9 @@ export function ThemeToggle({
   const { setTheme } = useTheme();
   const [pendingTheme, setPendingTheme] = useState<ThemePreference | null>(null);
   const [isPending, startTransition] = useTransition();
+  const activeTheme = pendingTheme ?? preferredTheme;
 
   useEffect(() => {
-    setPendingTheme(null);
     setTheme(authenticated ? preferredTheme : "dark");
   }, [authenticated, preferredTheme, setTheme]);
 
@@ -31,7 +31,7 @@ export function ThemeToggle({
   }
 
   function handleThemeChange(nextTheme: ThemePreference) {
-    if (isPending || nextTheme === preferredTheme) {
+    if (isPending || nextTheme === activeTheme) {
       return;
     }
 
@@ -53,8 +53,6 @@ export function ThemeToggle({
         });
     });
   }
-
-  const activeTheme = pendingTheme ?? preferredTheme;
 
   return (
     <div className="inline-flex items-center gap-1 rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface)] p-1 shadow-[0_10px_30px_var(--page-shadow-soft)]">

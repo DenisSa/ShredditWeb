@@ -658,6 +658,7 @@ function loadLegacyAccountPreference(username: string) {
       SELECT
         username,
         store_deletion_history,
+        theme,
         updated_at
       FROM account_preferences
       WHERE username = ?
