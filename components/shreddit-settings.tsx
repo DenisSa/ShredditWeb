@@ -14,7 +14,6 @@ import { Logo } from "@/components/icons";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   type AccountSchedule,
-  DEFAULT_STORE_DELETION_HISTORY,
   type ScheduledRunSummary,
   type SessionSummary,
   fetchScheduledHistory,
@@ -58,33 +57,6 @@ type AccountSettingsPayload = {
   minAgeDays: number;
   maxScore: number;
   schedule: Pick<AccountSchedule, "enabled" | "cadence" | "minuteUtc" | "hourUtc" | "weekdayUtc">;
-};
-
-const DEFAULT_SESSION_SUMMARY: SessionSummary = {
-  authConfigured: false,
-  configurationError: null,
-  redirectUri: "",
-  minAgeDays: 7,
-  maxScore: 100,
-  authenticated: false,
-  username: null,
-  scope: [],
-  expiresAt: null,
-  activeJob: null,
-  settings: {
-    minAgeDays: 7,
-    maxScore: 100,
-    storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
-  },
-  preferences: {
-    storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
-    theme: "dark",
-  },
-  schedule: null,
-  requiresReconnect: false,
-  lastScheduledRun: null,
-  lastRun: null,
-  lastRunDeletedSnippets: [],
 };
 
 const WEEKDAY_OPTIONS: Array<{ value: WeekdayValue; label: string }> = [
@@ -213,12 +185,17 @@ function subscribeToMountState() {
   return () => {};
 }
 
-export function ShredditSettings() {
+export function ShredditSettings({
+  initialSessionSummary,
+  initialScheduledHistory,
+}: {
+  initialSessionSummary: SessionSummary;
+  initialScheduledHistory: ScheduledRunSummary[];
+}) {
   const hasMounted = useSyncExternalStore(subscribeToMountState, () => true, () => false);
-  const [sessionSummary, setSessionSummary] = useState<SessionSummary>(DEFAULT_SESSION_SUMMARY);
-  const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() => defaultSettingsForm(DEFAULT_SESSION_SUMMARY, 0));
-  const [scheduledHistory, setScheduledHistory] = useState<ScheduledRunSummary[]>([]);
-  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [sessionSummary, setSessionSummary] = useState<SessionSummary>(initialSessionSummary);
+  const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() => defaultSettingsForm(initialSessionSummary, 0));
+  const [scheduledHistory, setScheduledHistory] = useState<ScheduledRunSummary[]>(initialScheduledHistory);
   const [isSaving, setIsSaving] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const hydratedUsernameRef = useRef<string | null>(null);
@@ -418,30 +395,16 @@ export function ShredditSettings() {
   );
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function bootstrap() {
-      setIsBootstrapping(true);
-
-      try {
-        await refreshSessionSummary();
-      } catch (error) {
-        if (!cancelled) {
-          setAuthError(toUserMessage(error));
-        }
-      } finally {
-        if (!cancelled) {
-          setIsBootstrapping(false);
-        }
-      }
+    if (!hasMounted) {
+      return;
     }
 
-    void bootstrap();
+    const timeout = window.setTimeout(() => {
+      syncSettingsForm(sessionSummary);
+    }, 0);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshSessionSummary]);
+    return () => window.clearTimeout(timeout);
+  }, [hasMounted, sessionSummary, syncSettingsForm]);
 
   useEffect(() => {
     if (!session?.username) {
@@ -456,7 +419,7 @@ export function ShredditSettings() {
   }, [refreshSessionSummary, session?.username]);
 
   useEffect(() => {
-    if (!session?.username || !hasMounted || isBootstrapping || isSaving || !formDirtyRef.current) {
+    if (!session?.username || !hasMounted || isSaving || !formDirtyRef.current) {
       return;
     }
 
@@ -493,7 +456,7 @@ export function ShredditSettings() {
     }, 450);
 
     return () => clearTimeout(timeout);
-  }, [applySavedSettings, autoSavePayload, hasMounted, isBootstrapping, isSaving, session?.username]);
+  }, [applySavedSettings, autoSavePayload, hasMounted, isSaving, session?.username]);
 
   function updateSettingsForm<K extends keyof SettingsFormState>(key: K, value: SettingsFormState[K]) {
     formDirtyRef.current = true;
@@ -515,10 +478,6 @@ export function ShredditSettings() {
     }
 
     startOauthRedirect(window.location);
-  }
-
-  if (!hasMounted) {
-    return null;
   }
 
   return (
@@ -559,7 +518,7 @@ export function ShredditSettings() {
           </Link>
           <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--page-border)] bg-[color:var(--page-surface)] px-3 py-2 text-sm text-[color:var(--page-muted-strong)]">
             <span className="h-2.5 w-2.5 rounded-full bg-[color:var(--page-success)]" />
-            <span>{session ? session.username : isBootstrapping ? "Checking session" : "Signed out"}</span>
+            <span>{session ? session.username : "Signed out"}</span>
           </div>
         </div>
       </header>
@@ -580,7 +539,7 @@ export function ShredditSettings() {
               {!session ? (
                 <button
                   className="inline-flex items-center justify-center rounded-full bg-[color:var(--page-accent)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[color:var(--page-accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!sessionSummary.authConfigured || isBootstrapping}
+                  disabled={!sessionSummary.authConfigured}
                   onClick={handleSignIn}
                 >
                   Connect Reddit

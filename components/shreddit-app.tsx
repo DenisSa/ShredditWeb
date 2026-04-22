@@ -13,7 +13,6 @@ import {
 import { Logo } from "@/components/icons";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
-  DEFAULT_STORE_DELETION_HISTORY,
   type JobSnapshot,
   type PreviewProgress,
   type PreviewResult,
@@ -45,33 +44,6 @@ type StatusMessage = {
   key: string;
   tone: "info" | "warning" | "danger" | "success";
   content: ReactNode;
-};
-
-const DEFAULT_SESSION_SUMMARY: SessionSummary = {
-  authConfigured: false,
-  configurationError: null,
-  redirectUri: "",
-  minAgeDays: 7,
-  maxScore: 100,
-  authenticated: false,
-  username: null,
-  scope: [],
-  expiresAt: null,
-  activeJob: null,
-  settings: {
-    minAgeDays: 7,
-    maxScore: 100,
-    storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
-  },
-  preferences: {
-    storeDeletionHistory: DEFAULT_STORE_DELETION_HISTORY,
-    theme: "dark",
-  },
-  schedule: null,
-  requiresReconnect: false,
-  lastScheduledRun: null,
-  lastRun: null,
-  lastRunDeletedSnippets: [],
 };
 
 function surfaceClassName(extra = "") {
@@ -560,86 +532,21 @@ function subscribeToMountState() {
   return () => {};
 }
 
-function HydrationShell() {
-  return (
-    <div className="pb-10">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface)] shadow-[0_10px_30px_var(--page-shadow-soft)]">
-            <Logo className="text-[color:var(--page-accent)]" size={22} />
-          </div>
-          <div>
-            <p className={sectionLabelClassName()}>ShredditWeb</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)] sm:text-3xl">
-              Cleanup workflow
-            </h1>
-          </div>
-        </div>
-        <div className="h-10 w-44 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-      </header>
-
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-6">
-          <section className={surfaceClassName("p-5 sm:p-6")}>
-            <div className="grid gap-3 md:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <div className="rounded-2xl border border-[color:var(--page-border)] bg-[color:var(--page-surface-strong)] px-4 py-4" key={index}>
-                  <div className="h-5 w-16 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-                  <div className="mt-3 h-5 w-24 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-                  <div className="mt-3 h-4 w-full animate-pulse rounded-full bg-[rgba(91,103,118,0.08)]" />
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className={surfaceClassName("p-5 sm:p-6")}>
-            <div className="h-5 w-28 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-            <div className="mt-4 h-10 w-56 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-            <div className="mt-4 h-4 w-full animate-pulse rounded-full bg-[rgba(91,103,118,0.08)]" />
-            <div className="mt-3 h-4 w-4/5 animate-pulse rounded-full bg-[rgba(91,103,118,0.08)]" />
-            <div className="mt-6 flex gap-3">
-              <div className="h-11 w-36 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-              <div className="h-11 w-28 animate-pulse rounded-full bg-[rgba(91,103,118,0.08)]" />
-            </div>
-          </section>
-
-          <section className={surfaceClassName("p-5 sm:p-6")}>
-            <div className="h-5 w-36 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-            <div className="mt-4 space-y-3">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <div className="h-16 animate-pulse rounded-2xl bg-[rgba(91,103,118,0.08)]" key={index} />
-              ))}
-            </div>
-          </section>
-        </div>
-
-        <aside className="space-y-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <section className={surfaceClassName("p-5")} key={index}>
-              <div className="h-4 w-24 animate-pulse rounded-full bg-[rgba(91,103,118,0.12)]" />
-              <div className="mt-4 space-y-3">
-                <div className="h-5 w-full animate-pulse rounded-full bg-[rgba(91,103,118,0.08)]" />
-                <div className="h-5 w-4/5 animate-pulse rounded-full bg-[rgba(91,103,118,0.08)]" />
-              </div>
-            </section>
-          ))}
-        </aside>
-      </div>
-    </div>
-  );
-}
-
-export function ShredditApp() {
+export function ShredditApp({
+  initialSessionSummary,
+}: {
+  initialSessionSummary: SessionSummary;
+}) {
   const hasMounted = useSyncExternalStore(subscribeToMountState, () => true, () => false);
-  const [sessionSummary, setSessionSummary] = useState<SessionSummary>(DEFAULT_SESSION_SUMMARY);
-  const [jobSnapshot, setJobSnapshot] = useState<JobSnapshot | null>(null);
-  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [sessionSummary, setSessionSummary] = useState<SessionSummary>(initialSessionSummary);
+  const [jobSnapshot, setJobSnapshot] = useState<JobSnapshot | null>(initialSessionSummary.activeJob);
+  const [isBootstrapping, setIsBootstrapping] = useState(Boolean(initialSessionSummary.activeJob?.jobId));
   const [authError, setAuthError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
-  const [dryRun, setDryRun] = useState(true);
+  const [dryRun, setDryRun] = useState(initialSessionSummary.activeJob?.dryRun ?? true);
   const [confirmChecked, setConfirmChecked] = useState(false);
   const [previewFilter, setPreviewFilter] = useState<PreviewFilter>("eligible");
   const [showReportDetails, setShowReportDetails] = useState(false);
@@ -809,13 +716,6 @@ export function ShredditApp() {
     return summary;
   }, []);
 
-  const hydrateActiveJob = useCallback(async (jobId: string) => {
-    const snapshot = await fetchRunStatus(jobId);
-    setJobSnapshot(snapshot);
-    setDryRun(snapshot.dryRun);
-    return snapshot;
-  }, []);
-
   const connectToJob = useCallback(
     (jobId: string) => {
       closeRunStream();
@@ -853,61 +753,63 @@ export function ShredditApp() {
 
   useEffect(() => {
     let cancelled = false;
+    const initialJobId = initialSessionSummary.activeJob?.jobId;
 
-    async function bootstrap() {
-      setIsBootstrapping(true);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      const callbackError = url.searchParams.get("authError");
 
-      try {
-        if (typeof window !== "undefined") {
-          const url = new URL(window.location.href);
-          const callbackError = url.searchParams.get("authError");
-
-          if (callbackError) {
+      if (callbackError) {
+        queueMicrotask(() => {
+          if (!cancelled) {
             setAuthError(callbackError);
-            url.searchParams.delete("authError");
-            const nextUrl = `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""}`;
-            window.history.replaceState(null, "", nextUrl);
           }
-        }
+        });
+        url.searchParams.delete("authError");
+        const nextUrl = `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""}`;
+        window.history.replaceState(null, "", nextUrl);
+      }
+    }
 
-        const summary = await refreshSessionSummary();
+    if (!initialJobId) {
+      return () => {
+        cancelled = true;
+        closeRunStream();
+      };
+    }
 
+    void fetchRunStatus(initialJobId)
+      .then((snapshot) => {
         if (cancelled) {
           return;
         }
 
-        if (summary.activeJob?.jobId) {
-          const snapshot = await hydrateActiveJob(summary.activeJob.jobId);
+        setJobSnapshot(snapshot);
+        setDryRun(snapshot.dryRun);
 
-          if (cancelled) {
-            return;
-          }
-
-          if (snapshot.status === "running") {
-            setNotice("Reconnected to an active server-side shred job.");
-            connectToJob(snapshot.jobId);
-          } else if (snapshot.report) {
-            setShowReportDetails((snapshot.report.failures.length ?? 0) > 0);
-          }
+        if (snapshot.status === "running") {
+          setNotice("Reconnected to an active server-side shred job.");
+          connectToJob(snapshot.jobId);
+        } else if (snapshot.report) {
+          setShowReportDetails((snapshot.report.failures.length ?? 0) > 0);
         }
-      } catch (error) {
+      })
+      .catch((error) => {
         if (!cancelled) {
           setAuthError(toUserMessage(error));
         }
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) {
           setIsBootstrapping(false);
         }
-      }
-    }
-
-    bootstrap();
+      });
 
     return () => {
       cancelled = true;
       closeRunStream();
     };
-  }, [closeRunStream, connectToJob, hydrateActiveJob, refreshSessionSummary]);
+  }, [closeRunStream, connectToJob, initialSessionSummary.activeJob?.jobId]);
 
   useEffect(() => {
     if (!session?.username) {
@@ -1010,7 +912,9 @@ export function ShredditApp() {
 
     try {
       const { jobId } = await startRun(dryRun);
-      const snapshot = await hydrateActiveJob(jobId);
+      const snapshot = await fetchRunStatus(jobId);
+      setJobSnapshot(snapshot);
+      setDryRun(snapshot.dryRun);
       setSessionSummary((current) => ({
         ...current,
         activeJob: snapshot,
@@ -1042,10 +946,6 @@ export function ShredditApp() {
     link.download = `shreddit-run-${new Date(runReport.finishedAt).toISOString()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-  }
-
-  if (!hasMounted) {
-    return <HydrationShell />;
   }
 
   const previewDiscoveredCount = (preview?.counts.commentsDiscovered ?? 0) + (preview?.counts.postsDiscovered ?? 0);

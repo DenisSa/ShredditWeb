@@ -16,7 +16,7 @@ import {
 } from "@/lib/server/shreddit-db";
 import { releaseAccountRun } from "@/lib/server/shreddit-run-coordinator";
 
-const SESSION_COOKIE_NAME = "shreddit.sid";
+export const SESSION_COOKIE_NAME = "shreddit.sid";
 const SESSION_MAX_AGE_DAYS = 30;
 const SESSION_MAX_AGE_MS = SESSION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 const FINISHED_JOB_TTL_MS = 30 * 60 * 1000;
@@ -234,7 +234,7 @@ export function clearSessionCookie(response: NextResponse) {
   });
 }
 
-export function getSessionFromRequest(request: NextRequest) {
+export function getSessionFromCookieValue(cookie: string | null | undefined) {
   startStoreMaintenance();
 
   const secret = getSessionSecret();
@@ -242,8 +242,6 @@ export function getSessionFromRequest(request: NextRequest) {
   if (!secret) {
     return null;
   }
-
-  const cookie = request.cookies.get(SESSION_COOKIE_NAME)?.value;
 
   if (!cookie) {
     return null;
@@ -265,6 +263,10 @@ export function getSessionFromRequest(request: NextRequest) {
   updateSession(session, { lastSeenAt: Date.now() });
 
   return session;
+}
+
+export function getSessionFromRequest(request: NextRequest) {
+  return getSessionFromCookieValue(request.cookies.get(SESSION_COOKIE_NAME)?.value);
 }
 
 export function getOrCreateSession(request: NextRequest) {
