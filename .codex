@@ -1,0 +1,81 @@
+# ShredditWeb Repo Tips
+
+## Runtime
+
+- Use Node `24.15.0`. The repo pins this in `.nvmrc` and `package.json`.
+- From the repo root, run `nvm use`.
+- If you see syntax errors from modern JS features like `??=`, you are almost certainly on the wrong Node version.
+
+## Package Manager
+
+- This repo uses `pnpm@10.33.0`.
+- In some environments, `pnpm` is installed under `$HOME/.local/share/pnpm` but not added to `PATH` yet.
+- If `pnpm` is missing, first run:
+  - `export PNPM_HOME="$HOME/.local/share/pnpm"`
+  - `export PATH="$PNPM_HOME:$PATH"`
+- If `pnpm` is missing, prefer Corepack:
+  - `corepack enable`
+  - `corepack prepare pnpm@10.33.0 --activate`
+- Install dependencies with `pnpm install`.
+
+## Shell Setup
+
+- Start by running `nvm use` from the repo root before using `pnpm`, `corepack`, or `node`.
+- A stale global Node can break modern tooling before the repo even boots, even if `.nvmrc` is correct.
+- If `corepack` itself throws syntax errors, you are almost certainly still on the wrong Node version.
+
+## Common Commands
+
+- Start local dev server: `pnpm dev`
+- Run all tests once: `pnpm test:run`
+- Run tests in watch mode: `pnpm test`
+- Run lint: `pnpm lint`
+- Build production bundle: `pnpm build`
+- Start production build locally: `pnpm start`
+
+## Targeted Verification
+
+- Run a single Vitest file with:
+  - `pnpm test:run tests/shreddit-db.test.ts`
+- Run a couple of targeted tests with:
+  - `pnpm test:run tests/shreddit-db.test.ts tests/shreddit-routes.test.ts`
+- Type-check with:
+  - `./node_modules/typescript/bin/tsc --noEmit`
+
+## Environment Files
+
+- Local development uses `.env.local`.
+- Base example env is in `.env.example`.
+- Production Docker example env is in `.env.production.example`.
+- For Reddit OAuth, make sure `REDDIT_REDIRECT_URI` exactly matches the Reddit app callback URL.
+- Raspberry Pi system metric overrides are available:
+  - `SHREDDIT_SYSTEM_TEMPERATURE_COMMAND`
+  - `SHREDDIT_SYSTEM_PROC_STAT_PATH`
+  - `SHREDDIT_SYSTEM_MEMINFO_PATH`
+  - `SHREDDIT_SYSTEM_THERMAL_ZONE_PATH`
+
+## Data and Persistence
+
+- SQLite defaults to `./data/shreddit.sqlite` unless `SQLITE_PATH` is overridden.
+- Sessions and deleted-item history are persisted in SQLite.
+- Active jobs are still in-memory, so restarting the app interrupts a running cleanup job.
+
+## Repo Notes
+
+- Main app UI lives in `components/shreddit-app.tsx`.
+- Server-side Reddit and cleanup logic lives in `lib/server/shreddit-core.ts`.
+- SQLite persistence lives in `lib/server/shreddit-db.ts`.
+- Session summary payload shaping lives in `lib/server/shreddit-session-summary.ts`.
+- Browser-side API helpers and shared client utilities live in `lib/shreddit.ts`.
+- Server-side Raspberry Pi metrics now live in `lib/server/shreddit-system-status.ts`.
+- The system metrics API route is `app/api/system/status/route.ts`.
+- The scheduler bootstraps from `lib/server/shreddit-background.ts` and runs through `lib/server/shreddit-scheduler.ts`.
+
+## Useful Gotchas
+
+- Do not assume an older globally installed Node will work here.
+- Prefer `pnpm` commands over `npm` or `yarn`.
+- If tests touch persistence, they often set `SQLITE_PATH` to a temporary DB in the test itself.
+- The project uses Next.js App Router from the repo root, not a nested app package.
+- Scheduled runs do automatically refresh expired Reddit access tokens, but an invalid refresh token disables the schedule until the user reconnects Reddit.
+- On Raspberry Pi hosts, `vcgencmd` may exist on the host but not inside the Docker container, so temperature collection often falls back to the thermal sysfs path.
