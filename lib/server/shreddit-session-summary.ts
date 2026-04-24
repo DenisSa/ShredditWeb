@@ -9,6 +9,7 @@ import {
   ensureAccountPreferences,
   ensureAccountSettings,
   getLatestRunForUsername,
+  getRunTotalsForUsername,
   getLatestScheduledRunForUsername,
   listDeletedItemSnippetsForRunId,
   listScheduledRunsForUsername,
@@ -55,6 +56,24 @@ export function buildSessionSummary(session: ServerSessionRecord | null): Sessio
       : null;
   const schedule = session?.reddit ? loadAccountSchedule(session.reddit.username) : null;
   const lastScheduledRun = session?.reddit ? getLatestScheduledRunForUsername(session.reddit.username) : null;
+  const runTotals = session?.reddit
+    ? getRunTotalsForUsername(session.reddit.username)
+    : {
+        runCount: 0,
+        manualRunCount: 0,
+        scheduledRunCount: 0,
+        liveRunCount: 0,
+        dryRunCount: 0,
+        lastFinishedAt: null,
+        totals: {
+          discovered: 0,
+          eligible: 0,
+          processed: 0,
+          edited: 0,
+          deleted: 0,
+          failed: 0,
+        },
+      };
   const lastRun = session?.reddit ? getLatestRunForUsername(session.reddit.username) : null;
   const lastRunDeletedSnippets =
     lastRun && !lastRun.report.dryRun && lastRun.report.storedDeletionHistory
@@ -78,6 +97,7 @@ export function buildSessionSummary(session: ServerSessionRecord | null): Sessio
     schedule,
     requiresReconnect: accountAuth?.requiresReconnect ?? false,
     lastScheduledRun,
+    runTotals,
     lastRun,
     lastRunDeletedSnippets,
   };

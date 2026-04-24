@@ -145,6 +145,23 @@ export type LastRunSummary = {
   report: RunReport;
 };
 
+export type AccountRunTotals = {
+  runCount: number;
+  manualRunCount: number;
+  scheduledRunCount: number;
+  liveRunCount: number;
+  dryRunCount: number;
+  lastFinishedAt: number | null;
+  totals: {
+    discovered: number;
+    eligible: number;
+    processed: number;
+    edited: number;
+    deleted: number;
+    failed: number;
+  };
+};
+
 export type DeletedItemSnippet = {
   id: number;
   deletedAt: number;
@@ -197,6 +214,7 @@ export type SessionSummary = {
   schedule: AccountSchedule | null;
   requiresReconnect: boolean;
   lastScheduledRun: ScheduledRunSummary | null;
+  runTotals: AccountRunTotals;
   lastRun: LastRunSummary | null;
   lastRunDeletedSnippets: DeletedItemSnippet[];
 };

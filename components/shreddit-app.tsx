@@ -27,7 +27,6 @@ import {
   formatExpiry,
   formatTimestamp,
   getBrowserTimezone,
-  getDeletedSnippetSummary,
   getItemSummary,
   logoutRedditSession,
   requestPreview,
@@ -327,116 +326,70 @@ function DeviceStatusCard({
   );
 }
 
-function LastRunCard({
-  lastRun,
-  snippets,
+function TotalsCard({
+  runTotals,
 }: {
-  lastRun: SessionSummary["lastRun"];
-  snippets: SessionSummary["lastRunDeletedSnippets"];
+  runTotals: SessionSummary["runTotals"];
 }) {
-  if (!lastRun) {
+  if (runTotals.runCount === 0) {
     return (
       <section className={surfaceClassName("p-5 sm:p-6")}>
         <div className="flex flex-col gap-3">
           <div>
-            <p className={sectionLabelClassName()}>Recent activity</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">Last run</h2>
+            <p className={sectionLabelClassName()}>Totals</p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">Cleanup totals</h2>
           </div>
           <div className={`${subtlePanelClassName("px-4 py-5")} text-sm leading-7 text-[color:var(--page-muted)]`}>
-            No cleanup runs have finished yet. Once a manual or scheduled run completes, its outcome will show up here.
+            No cleanup runs have finished yet. Once a manual or scheduled run completes, cumulative totals will appear here.
           </div>
         </div>
       </section>
     );
   }
 
-  const primaryLabel = lastRun.report.dryRun ? "Would delete" : "Deleted";
-  const snippetEmptyMessage = lastRun.report.dryRun
-    ? "Dry runs never store deleted content snippets."
-    : lastRun.report.totals.deleted === 0
-      ? "This run did not delete any items."
-      : !lastRun.report.storedDeletionHistory
-        ? "Deleted history was turned off for this run."
-        : "No deleted content preview is available for this run.";
-
   return (
     <section className={surfaceClassName("p-5 sm:p-6")}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className={sectionLabelClassName()}>Recent activity</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">Last run</h2>
+          <p className={sectionLabelClassName()}>Totals</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--page-ink)]">Cleanup totals</h2>
           <p className="mt-2 text-sm leading-7 text-[color:var(--page-muted)]">
-            {lastRun.source === "manual" ? "Started from this dashboard." : "Triggered by the saved schedule."} Finished{" "}
-            {formatTimestamp(lastRun.report.finishedAt)}.
+            Across {runTotals.runCount} finished runs, including {runTotals.manualRunCount} manual and{" "}
+            {runTotals.scheduledRunCount} scheduled runs. Last completed{" "}
+            {runTotals.lastFinishedAt ? formatTimestamp(runTotals.lastFinishedAt) : "recently"}.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <span className="rounded-full bg-[rgba(91,103,118,0.12)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--page-muted-strong)]">
-            {lastRun.source}
+            {runTotals.liveRunCount} live
           </span>
           <span className="rounded-full bg-[rgba(91,103,118,0.12)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--page-muted-strong)]">
-            {lastRun.report.dryRun ? "Dry run" : "Live deletion"}
-          </span>
-          <span className="rounded-full bg-[rgba(91,103,118,0.12)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--page-muted-strong)]">
-            {lastRun.report.status}
+            {runTotals.dryRunCount} dry run
           </span>
         </div>
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div>
-          <p className={sectionLabelClassName()}>{primaryLabel}</p>
+          <p className={sectionLabelClassName()}>Deleted total</p>
           <p className="mt-2 text-5xl font-semibold tracking-[-0.04em] text-[color:var(--page-ink)]">
-            {lastRun.report.totals.deleted}
+            {runTotals.totals.deleted}
           </p>
           <p className="mt-3 text-sm leading-7 text-[color:var(--page-muted)]">
-            Processed {lastRun.report.totals.processed} of {lastRun.report.totals.eligible} eligible items with{" "}
-            {lastRun.report.totals.failed} failures.
+            Processed {runTotals.totals.processed} of {runTotals.totals.eligible} eligible items with{" "}
+            {runTotals.totals.failed} failures across all finished runs.
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-          <CompactMetric label="Processed" value={lastRun.report.totals.processed} />
-          <CompactMetric label="Failed" value={lastRun.report.totals.failed} />
-          <CompactMetric label="Finished" value={formatTimestamp(lastRun.report.finishedAt)} />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+          <CompactMetric label="Processed" value={runTotals.totals.processed} />
+          <CompactMetric label="Failed" value={runTotals.totals.failed} />
+          <CompactMetric label="Runs" value={runTotals.runCount} />
+          <CompactMetric
+            label="Last finished"
+            value={runTotals.lastFinishedAt ? formatTimestamp(runTotals.lastFinishedAt) : "Unavailable"}
+          />
         </div>
-      </div>
-
-      <div className="mt-6">
-        <p className={sectionLabelClassName()}>Deleted preview</p>
-        {snippets.length === 0 ? (
-          <div className={`${subtlePanelClassName("mt-3 px-4 py-5")} text-sm leading-7 text-[color:var(--page-muted)]`}>
-            {snippetEmptyMessage}
-          </div>
-        ) : (
-          <div className={`${subtlePanelClassName("mt-3 overflow-hidden")}`}>
-            <div className="divide-y divide-[color:var(--page-border)]">
-              {snippets.map((snippet) => (
-                <div className="px-4 py-4" key={snippet.id}>
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="inline-flex rounded-full bg-[rgba(91,103,118,0.12)] px-2.5 py-1 text-xs font-medium text-[color:var(--page-muted-strong)]">
-                          {snippet.contentKind === "comment" ? "Comment" : "Post"}
-                        </span>
-                        <span className="text-sm font-medium text-[color:var(--page-ink)]">r/{snippet.subreddit}</span>
-                      </div>
-                      <p className="mt-3 text-sm leading-6 text-[color:var(--page-ink)]">{getDeletedSnippetSummary(snippet)}</p>
-                    </div>
-                    <a
-                      className="shrink-0 text-sm font-medium text-[color:var(--page-accent)] underline-offset-4 hover:underline"
-                      href={snippet.permalink}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      Open
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </section>
   );
@@ -1142,7 +1095,7 @@ export function ShredditApp({
             <Stepper steps={stepItems} />
           </section>
 
-          <LastRunCard lastRun={sessionSummary.lastRun} snippets={sessionSummary.lastRunDeletedSnippets} />
+          <TotalsCard runTotals={sessionSummary.runTotals} />
 
           <section className={surfaceClassName("p-5 sm:p-6")}>
             {activeStep === "connect" ? (

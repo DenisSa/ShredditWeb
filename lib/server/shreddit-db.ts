@@ -10,6 +10,7 @@ import {
 } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
+  AccountRunTotals,
   AccountSchedule,
   CleanupSettings,
   DEFAULT_STORE_DELETION_HISTORY,
@@ -1098,6 +1099,62 @@ export function getLatestRunForUsername(username: string) {
   }
 
   return latestManual.report.finishedAt >= latestScheduled.report.finishedAt ? latestManual : latestScheduled;
+}
+
+export function getRunTotalsForUsername(username: string): AccountRunTotals {
+  const rows = getDatabase()
+    .prepare(`
+      SELECT 'manual' AS source, report_json
+      FROM manual_runs
+      WHERE username = ?
+      UNION ALL
+      SELECT 'scheduled' AS source, report_json
+      FROM scheduled_runs
+      WHERE username = ?
+        AND report_json IS NOT NULL
+    `)
+    .all(username, username) as Array<{
+      source: LastRunSummary["source"];
+      report_json: string;
+    }>;
+
+  return rows.reduce<AccountRunTotals>(
+    (summary, row) => {
+      const report = JSON.parse(row.report_json) as RunReport;
+
+      summary.runCount += 1;
+      summary.manualRunCount += row.source === "manual" ? 1 : 0;
+      summary.scheduledRunCount += row.source === "scheduled" ? 1 : 0;
+      summary.liveRunCount += report.dryRun ? 0 : 1;
+      summary.dryRunCount += report.dryRun ? 1 : 0;
+      summary.lastFinishedAt =
+        summary.lastFinishedAt === null ? report.finishedAt : Math.max(summary.lastFinishedAt, report.finishedAt);
+      summary.totals.discovered += report.totals.discovered;
+      summary.totals.eligible += report.totals.eligible;
+      summary.totals.processed += report.totals.processed;
+      summary.totals.edited += report.totals.edited;
+      summary.totals.deleted += report.totals.deleted;
+      summary.totals.failed += report.totals.failed;
+
+      return summary;
+    },
+    {
+      runCount: 0,
+      manualRunCount: 0,
+      scheduledRunCount: 0,
+      liveRunCount: 0,
+      dryRunCount: 0,
+      lastFinishedAt: null,
+      totals: {
+        discovered: 0,
+        eligible: 0,
+        processed: 0,
+        edited: 0,
+        deleted: 0,
+        failed: 0,
+      },
+    },
+  );
 }
 
 export function insertDeletedItem(record: DeletedItemRecord) {

@@ -8,6 +8,7 @@ import {
   ensureAccountPreferences,
   ensureAccountSettings,
   getLatestRunForUsername,
+  getRunTotalsForUsername,
   listDeletedItemSnippetsForRunId,
   loadAccountSchedule,
   loadAccountPreferences,
@@ -286,6 +287,22 @@ describe("shreddit-db account lifecycle", () => {
       source: "scheduled",
       report: {
         runId: "scheduled-run-1",
+      },
+    });
+    expect(getRunTotalsForUsername("alice")).toMatchObject({
+      runCount: 2,
+      manualRunCount: 1,
+      scheduledRunCount: 1,
+      liveRunCount: 2,
+      dryRunCount: 0,
+      lastFinishedAt: scheduledReport.finishedAt,
+      totals: {
+        discovered: 4,
+        eligible: 4,
+        processed: 4,
+        edited: 2,
+        deleted: 4,
+        failed: 0,
       },
     });
     expect(listDeletedItemSnippetsForRunId("scheduled-run-1", 3)).toEqual([

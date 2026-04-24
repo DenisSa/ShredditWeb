@@ -150,6 +150,22 @@ describe("shreddit route payloads", () => {
         runId: "scheduled-run-1",
       },
     });
+    expect(payload.runTotals).toMatchObject({
+      runCount: 2,
+      manualRunCount: 1,
+      scheduledRunCount: 1,
+      liveRunCount: 2,
+      dryRunCount: 0,
+      lastFinishedAt: scheduledReport.finishedAt,
+      totals: {
+        discovered: 2,
+        eligible: 2,
+        processed: 2,
+        edited: 2,
+        deleted: 2,
+        failed: 0,
+      },
+    });
     expect(payload.lastRunDeletedSnippets).toEqual([
       expect.objectContaining({
         subreddit: "typescript",
